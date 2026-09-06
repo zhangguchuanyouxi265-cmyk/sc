@@ -1,0 +1,1102 @@
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local Lighting = game:GetService("Lighting")
+local RunService = game:GetService("RunService")
+local HttpService = game:GetService("HttpService")
+
+local LocalPlayer = Players.LocalPlayer
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+
+---------------------------------------------------------
+-- 設定エリア
+---------------------------------------------------------
+local CORRECT_KEY = "banana" -- 必要なキー
+local ALLOWED_PLACE_ID = 0 -- TODO: 起動を許可するマップのPlaceIdをここに数字で入れてください（例: 1234567890）
+
+---------------------------------------------------------
+-- マップ判定・キー認証システム
+---------------------------------------------------------
+if ALLOWED_PLACE_ID ~= 0 and game.PlaceId ~= ALLOWED_PLACE_ID then
+	LocalPlayer:Kick("このマップではBanana Hubを使用できません。")
+	return
+end
+
+-- キー認証用GUI
+local authGui = Instance.new("ScreenGui")
+authGui.Name = "AuthGui"
+authGui.ResetOnSpawn = false
+authGui.Parent = PlayerGui
+
+local authFrame = Instance.new("Frame")
+authFrame.Size = UDim2.new(0, 300, 0, 160)
+authFrame.Position = UDim2.new(0.5, -150, 0.5, -80)
+authFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+authFrame.BorderSizePixel = 0
+authFrame.Parent = authGui
+
+local authStroke = Instance.new("UIStroke")
+authStroke.Color = Color3.fromRGB(212, 148, 54)
+authStroke.Thickness = 1.5
+authStroke.Parent = authFrame
+
+local authCorner = Instance.new("UICorner")
+authCorner.CornerRadius = UDim.new(0, 8)
+authCorner.Parent = authFrame
+
+local authTitle = Instance.new("TextLabel")
+authTitle.Size = UDim2.new(1, 0, 0, 40)
+authTitle.BackgroundTransparency = 1
+authTitle.Text = "Banana Hub - Key Required"
+authTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
+authTitle.TextSize = 16
+authTitle.Font = Enum.Font.SourceSansBold
+authTitle.Parent = authFrame
+
+local keyBox = Instance.new("TextBox")
+keyBox.Size = UDim2.new(0, 260, 0, 35)
+keyBox.Position = UDim2.new(0.5, -130, 0, 50)
+keyBox.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+keyBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+keyBox.PlaceholderText = "Enter Key..."
+keyBox.Text = ""
+keyBox.TextSize = 14
+keyBox.Font = Enum.Font.SourceSans
+keyBox.Parent = authFrame
+
+local keyBoxCorner = Instance.new("UICorner")
+keyBoxCorner.CornerRadius = UDim.new(0, 4)
+keyBoxCorner.Parent = keyBox
+
+local submitBtn = Instance.new("TextButton")
+submitBtn.Size = UDim2.new(0, 260, 0, 35)
+submitBtn.Position = UDim2.new(0.5, -130, 0, 100)
+submitBtn.BackgroundColor3 = Color3.fromRGB(212, 148, 54)
+submitBtn.Text = "Verify Key"
+submitBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+submitBtn.TextSize = 14
+submitBtn.Font = Enum.Font.SourceSansBold
+submitBtn.Parent = authFrame
+
+local submitCorner = Instance.new("UICorner")
+submitCorner.CornerRadius = UDim.new(0, 4)
+submitCorner.Parent = submitBtn
+
+local verified = false
+submitBtn.MouseButton1Click:Connect(function()
+	if keyBox.Text == CORRECT_KEY then
+		verified = true
+		authGui:Destroy()
+	else
+		submitBtn.Text = "Wrong Key!"
+		task.wait(1)
+		submitBtn.Text = "Verify Key"
+	end
+end)
+
+repeat task.wait() until verified
+
+---------------------------------------------------------
+-- カラー定義
+---------------------------------------------------------
+local BG_COLOR = Color3.fromRGB(15, 15, 15)
+local PANEL_COLOR = Color3.fromRGB(22, 22, 22)
+local BORDER_COLOR = Color3.fromRGB(212, 148, 54)
+local TEXT_COLOR = Color3.fromRGB(255, 255, 255)
+local SUBTEXT_COLOR = Color3.fromRGB(180, 180, 180)
+
+-- スクリーンUI
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "CustomHubGui"
+screenGui.ResetOnSpawn = false
+screenGui.Parent = PlayerGui
+
+-- ドラッグ機能
+local function makeDraggable(frame)
+	local dragging, dragStart, startPos
+	frame.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = true
+			dragStart = input.Position
+			startPos = frame.Position
+			input.Changed:Connect(function()
+				if input.UserInputState == Enum.UserInputState.End then
+					dragging = false
+				end
+			end)
+		end
+	end)
+	UserInputService.InputChanged:Connect(function(input)
+		if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+			local delta = input.Position - dragStart
+			frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+		end
+	end)
+end
+
+-- メイン枠
+local mainFrame = Instance.new("Frame")
+mainFrame.Name = "MainFrame"
+mainFrame.Size = UDim2.new(0, 520, 0, 320)
+mainFrame.Position = UDim2.new(0.5, -260, 0.5, -160)
+mainFrame.BackgroundColor3 = BG_COLOR
+mainFrame.BorderSizePixel = 0
+mainFrame.Active = true
+mainFrame.Parent = screenGui
+
+local mainStroke = Instance.new("UIStroke")
+mainStroke.Color = BORDER_COLOR
+mainStroke.Thickness = 1.5
+mainStroke.Parent = mainFrame
+
+local mainCorner = Instance.new("UICorner")
+mainCorner.CornerRadius = UDim.new(0, 8)
+mainCorner.Parent = mainFrame
+
+makeDraggable(mainFrame)
+
+-- 全体の枠（ボーダー）を動的に変更する関数を保持・管理用リスト
+local updateBorderColorFuncs = {}
+local function applyBorderColor(newColor)
+	BORDER_COLOR = newColor
+	mainStroke.Color = newColor
+	for _, fn in ipairs(updateBorderColorFuncs) do
+		pcall(fn, newColor)
+	end
+end
+
+-- 小さくて丸い黒色の Open ボタン（完全に閉じている時に表示され、クリックで再表示する）
+local openButton = Instance.new("TextButton")
+openButton.Name = "OpenButton"
+openButton.Size = UDim2.new(0, 36, 0, 36)
+openButton.Position = UDim2.new(0.1, 0, 0.1, 0)
+openButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+openButton.Text = "Open"
+openButton.TextColor3 = TEXT_COLOR
+openButton.TextSize = 11
+openButton.Font = Enum.Font.SourceSansBold
+openButton.Visible = false
+openButton.Active = true
+openButton.Parent = screenGui
+
+local openStroke = Instance.new("UIStroke")
+openStroke.Color = BORDER_COLOR
+openStroke.Thickness = 1.5
+openStroke.Parent = openButton
+table.insert(updateBorderColorFuncs, function(c) openStroke.Color = c end)
+
+local openCorner = Instance.new("UICorner")
+openCorner.CornerRadius = UDim.new(1, 0)
+openCorner.Parent = openButton
+
+makeDraggable(openButton)
+
+-- ヘッダー部
+local headerFrame = Instance.new("Frame")
+headerFrame.Size = UDim2.new(1, 0, 0, 35)
+headerFrame.BackgroundTransparency = 1
+headerFrame.Parent = mainFrame
+
+local titleLabel = Instance.new("TextLabel")
+titleLabel.Size = UDim2.new(0, 200, 1, 0)
+titleLabel.Position = UDim2.new(0, 15, 0, 0)
+titleLabel.BackgroundTransparency = 1
+titleLabel.Text = "Banana Hub"
+titleLabel.TextColor3 = TEXT_COLOR
+titleLabel.TextSize = 18
+titleLabel.Font = Enum.Font.SourceSansBold
+titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+titleLabel.Parent = headerFrame
+
+---------------------------------------------------------
+-- 右上ボタンの配置（閉じる「×」と 畳む「ー」）
+---------------------------------------------------------
+
+-- 1. 閉じるボタン（右端：×）
+local closeBtn = Instance.new("TextButton")
+closeBtn.Size = UDim2.new(0, 30, 0, 25)
+closeBtn.Position = UDim2.new(1, -35, 0, 5)
+closeBtn.BackgroundColor3 = BG_COLOR
+closeBtn.Text = "×"
+closeBtn.TextColor3 = TEXT_COLOR
+closeBtn.Font = Enum.Font.SourceSansBold
+closeBtn.Parent = headerFrame
+
+local closeStroke = Instance.new("UIStroke")
+closeStroke.Color = BORDER_COLOR
+closeStroke.Thickness = 1
+closeStroke.Parent = closeBtn
+table.insert(updateBorderColorFuncs, function(c) closeStroke.Color = c end)
+
+local closeCorner = Instance.new("UICorner")
+closeCorner.CornerRadius = UDim.new(0, 4)
+closeCorner.Parent = closeBtn
+
+-- 2. 畳むボタン（閉じるボタンの左隣：ー / ＋）
+local collapseBtn = Instance.new("TextButton")
+collapseBtn.Size = UDim2.new(0, 30, 0, 25)
+collapseBtn.Position = UDim2.new(1, -70, 0, 5)
+collapseBtn.BackgroundColor3 = BG_COLOR
+collapseBtn.Text = "ー"
+collapseBtn.TextColor3 = TEXT_COLOR
+collapseBtn.Font = Enum.Font.SourceSansBold
+collapseBtn.Parent = headerFrame
+
+local collapseStroke = Instance.new("UIStroke")
+collapseStroke.Color = BORDER_COLOR
+collapseStroke.Thickness = 1
+collapseStroke.Parent = collapseBtn
+table.insert(updateBorderColorFuncs, function(c) collapseStroke.Color = c end)
+
+local collapseCorner = Instance.new("UICorner")
+collapseCorner.CornerRadius = UDim.new(0, 4)
+collapseCorner.Parent = collapseBtn
+
+-- 畳み状態の管理変数
+local isCollapsed = false
+
+-- 畳むボタンの処理（中身だけを隠してタイトルバーの高さにする）
+collapseBtn.MouseButton1Click:Connect(function()
+	isCollapsed = not isCollapsed
+	if isCollapsed then
+		sidebar.Visible = false
+		contentArea.Visible = false
+		headerFrame.Size = UDim2.new(1, 0, 1, 0)
+		mainFrame.Size = UDim2.new(0, 520, 0, 35)
+		collapseBtn.Text = "＋"
+	else
+		sidebar.Visible = true
+		contentArea.Visible = true
+		headerFrame.Size = UDim2.new(1, 0, 0, 35)
+		mainFrame.Size = UDim2.new(0, 520, 0, 320)
+		collapseBtn.Text = "ー"
+	end
+end)
+
+-- 閉じるボタンの処理（メイン枠を非表示にして、黒い「Open」ボタンを出す）
+closeBtn.MouseButton1Click:Connect(function()
+	mainFrame.Visible = false
+	openButton.Visible = true
+end)
+
+-- Openボタンクリックでメイン枠を再表示
+openButton.MouseButton1Click:Connect(function()
+	mainFrame.Visible = true
+	openButton.Visible = false
+	if isCollapsed then
+		isCollapsed = false
+		sidebar.Visible = true
+		contentArea.Visible = true
+		headerFrame.Size = UDim2.new(1, 0, 0, 35)
+		mainFrame.Size = UDim2.new(0, 520, 0, 320)
+		collapseBtn.Text = "ー"
+	end
+end)
+
+---------------------------------------------------------
+-- サイドバー (左側)
+---------------------------------------------------------
+local sidebar = Instance.new("Frame")
+sidebar.Name = "Sidebar"
+sidebar.Size = UDim2.new(0, 140, 1, -35)
+sidebar.Position = UDim2.new(0, 0, 0, 35)
+sidebar.BackgroundTransparency = 1
+sidebar.Parent = mainFrame
+
+local sideDivider = Instance.new("Frame")
+sideDivider.Size = UDim2.new(0, 1, 1, -10)
+sideDivider.Position = UDim2.new(1, -1, 0, 0)
+sideDivider.BackgroundColor3 = BORDER_COLOR
+sideDivider.BorderSizePixel = 0
+sideDivider.Parent = sidebar
+table.insert(updateBorderColorFuncs, function(c) sideDivider.BackgroundColor3 = c end)
+
+-- プレイヤーアイコン
+local profileFrame = Instance.new("Frame")
+profileFrame.Name = "ProfileFrame"
+profileFrame.Size = UDim2.new(1, -10, 0, 40)
+profileFrame.Position = UDim2.new(0, 5, 1, -45)
+profileFrame.BackgroundTransparency = 1
+profileFrame.Parent = sidebar
+
+local avatarImage = Instance.new("ImageLabel")
+avatarImage.Name = "AvatarImage"
+avatarImage.Size = UDim2.new(0, 32, 0, 32)
+avatarImage.Position = UDim2.new(0, 5, 0.5, -16)
+avatarImage.BackgroundColor3 = PANEL_COLOR
+avatarImage.Parent = profileFrame
+
+local avatarCorner = Instance.new("UICorner")
+avatarCorner.CornerRadius = UDim.new(1, 0)
+avatarCorner.Parent = avatarImage
+
+local avatarStroke = Instance.new("UIStroke")
+avatarStroke.Color = BORDER_COLOR
+avatarStroke.Thickness = 1
+avatarStroke.Parent = avatarImage
+table.insert(updateBorderColorFuncs, function(c) avatarStroke.Color = c end)
+
+task.spawn(function()
+	local content, isReady = Players:GetUserThumbnailAsync(LocalPlayer.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size100x100)
+	if isReady then
+		avatarImage.Image = content
+	end
+end)
+
+local usernameLabel = Instance.new("TextLabel")
+usernameLabel.Size = UDim2.new(1, -45, 1, 0)
+usernameLabel.Position = UDim2.new(0, 42, 0, 0)
+usernameLabel.BackgroundTransparency = 1
+usernameLabel.Text = LocalPlayer.DisplayName
+usernameLabel.TextColor3 = TEXT_COLOR
+usernameLabel.TextSize = 12
+usernameLabel.Font = Enum.Font.SourceSansBold
+usernameLabel.TextXAlignment = Enum.TextXAlignment.Left
+usernameLabel.TextTruncate = Enum.TextTruncate.AtEnd
+usernameLabel.Parent = profileFrame
+
+---------------------------------------------------------
+-- タブ切り替えボタン (4つ)
+---------------------------------------------------------
+local tabButtons = {}
+local tabPages = {}
+
+local function createTabButton(name, index)
+	local btn = Instance.new("TextButton")
+	btn.Size = UDim2.new(1, -10, 0, 26)
+	btn.Position = UDim2.new(0, 5, 0, 5 + (index - 1) * 32)
+	btn.BackgroundColor3 = (index == 1) and PANEL_COLOR or BG_COLOR
+	btn.Text = name
+	btn.TextColor3 = (index == 1) and TEXT_COLOR or SUBTEXT_COLOR
+	btn.Font = Enum.Font.SourceSansBold
+	btn.TextSize = 12
+	btn.Parent = sidebar
+
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 4)
+	corner.Parent = btn
+
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = (index == 1) and BORDER_COLOR or Color3.fromRGB(60, 60, 60)
+	stroke.Thickness = 1
+	stroke.Parent = btn
+	
+	if index == 1 then
+		table.insert(updateBorderColorFuncs, function(c)
+			if btn.BackgroundColor3 == PANEL_COLOR then
+				stroke.Color = c
+			end
+		end)
+	end
+
+	table.insert(tabButtons, {Btn = btn, Stroke = stroke, Index = index})
+	return btn
+end
+
+createTabButton("メイン機能", 1)
+createTabButton("特殊機能", 2)
+createTabButton("設定・情報", 3)
+createTabButton("設定", 4)
+
+---------------------------------------------------------
+-- コンテンツ表示エリア (右側)
+---------------------------------------------------------
+local contentArea = Instance.new("Frame")
+contentArea.Size = UDim2.new(1, -145, 1, -40)
+contentArea.Position = UDim2.new(0, 145, 0, 35)
+contentArea.BackgroundTransparency = 1
+contentArea.Parent = mainFrame
+
+local function createPage()
+	local scroll = Instance.new("ScrollingFrame")
+	scroll.Size = UDim2.new(1, -10, 1, -5)
+	scroll.Position = UDim2.new(0, 0, 0, 0)
+	scroll.BackgroundTransparency = 1
+	scroll.BorderSizePixel = 0
+	scroll.ScrollBarThickness = 4
+	scroll.ScrollBarImageColor3 = BORDER_COLOR
+	table.insert(updateBorderColorFuncs, function(c) scroll.ScrollBarImageColor3 = c end)
+
+	local layout = Instance.new("UIListLayout")
+	layout.SortOrder = Enum.SortOrder.LayoutOrder
+	layout.Padding = UDim.new(0, 8)
+	layout.Parent = scroll
+
+	layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+		scroll.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y + 10)
+	end)
+
+	return scroll
+end
+
+local function createMenuButton(parent, text, layoutOrder)
+	local btn = Instance.new("TextButton")
+	btn.Size = UDim2.new(1, -10, 0, 36)
+	btn.BackgroundColor3 = PANEL_COLOR
+	btn.Text = "  " .. text
+	btn.TextColor3 = TEXT_COLOR
+	btn.Font = Enum.Font.SourceSansBold
+	btn.TextSize = 14
+	btn.TextXAlignment = Enum.TextXAlignment.Left
+	btn.LayoutOrder = layoutOrder or 0
+	btn.Parent = parent
+
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = BORDER_COLOR
+	stroke.Thickness = 1
+	stroke.Parent = btn
+	table.insert(updateBorderColorFuncs, function(c) stroke.Color = c end)
+
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 6)
+	corner.Parent = btn
+
+	return btn
+end
+
+local page1 = createPage()
+page1.Parent = contentArea
+local page2 = createPage()
+page2.Visible = false
+page2.Parent = contentArea
+local page3 = createPage()
+page3.Visible = false
+page3.Parent = contentArea
+local page4 = createPage()
+page4.Visible = false
+page4.Parent = contentArea
+
+table.insert(tabPages, page1)
+table.insert(tabPages, page2)
+table.insert(tabPages, page3)
+table.insert(tabPages, page4)
+
+for i, tabInfo in ipairs(tabButtons) do
+	tabInfo.Btn.MouseButton1Click:Connect(function()
+		for j, page in ipairs(tabPages) do
+			page.Visible = (j == i)
+		end
+		for j, info in ipairs(tabButtons) do
+			if j == i then
+				info.Btn.BackgroundColor3 = PANEL_COLOR
+				info.Btn.TextColor3 = TEXT_COLOR
+				info.Stroke.Color = BORDER_COLOR
+			else
+				info.Btn.BackgroundColor3 = BG_COLOR
+				info.Btn.TextColor3 = SUBTEXT_COLOR
+				info.Stroke.Color = Color3.fromRGB(60, 60, 60)
+			end
+		end
+	end)
+end
+
+---------------------------------------------------------
+-- タブ1 機能
+---------------------------------------------------------
+local blogmanBtn = createMenuButton(page1, "Blogman 爆速掴み＆自動射撃: OFF", 1)
+local itemBringBtn = createMenuButton(page1, "全アイテムを完全吸引", 2)
+local tsunamiBtn = createMenuButton(page1, "津波を発生 (海から)", 3)
+local antiKickBtn = createMenuButton(page1, "Anti-Kick: OFF", 4)
+local lagRemoveBtn = createMenuButton(page1, "ラグ削除を実行", 5)
+
+---------------------------------------------------------
+-- タブ2 機能
+---------------------------------------------------------
+local ffBringBtn = createMenuButton(page2, "FF内アイテム持込: OFF", 1)
+local silentAimBtn = createMenuButton(page2, "サイレントエイム: OFF", 2)
+local touchFlyItemBtn = createMenuButton(page2, "触れたアイテムを弾き飛ばし: OFF", 3)
+local launchAllBtn = createMenuButton(page2, "全員爆速吹き飛ばし: OFF", 4)
+local autoFlyBtn = createMenuButton(page2, "Fly automatically: OFF", 5)
+local immovableBtn = createMenuButton(page2, "不動(掴み/押し無効): OFF", 6)
+local removeLegsOnGrabBtn = createMenuButton(page2, "掴んだ人の足を消去: OFF", 7)
+
+---------------------------------------------------------
+-- タブ3 機能
+---------------------------------------------------------
+local antiLagBtn = createMenuButton(page3, "超・ラグ激減（Anti-lag+）を実行", 1)
+local fpsToggleBtn = createMenuButton(page3, "FPS表示カウンター: OFF", 2)
+local lagOtherBtn = createMenuButton(page3, "他プレイヤー激重化: OFF", 3)
+
+---------------------------------------------------------
+-- タブ4 機能
+---------------------------------------------------------
+local langBtn = createMenuButton(page4, "言語選択: 日本語 (Japanese)", 1)
+local currentLang = "JP"
+langBtn.MouseButton1Click:Connect(function()
+	if currentLang == "JP" then
+		currentLang = "EN"
+		langBtn.Text = "  Language: English"
+		titleLabel.Text = "Banana Hub (EN)"
+	else
+		currentLang = "JP"
+		langBtn.Text = "  言語選択: 日本語 (Japanese)"
+		titleLabel.Text = "Banana Hub"
+	end
+end)
+
+local colorIndex = 1
+local colorThemes = {
+	{name = "ゴールド (Gold)", color = Color3.fromRGB(212, 148, 54)},
+	{name = "ネオンブルー (Blue)", color = Color3.fromRGB(0, 150, 255)},
+	{name = "エメラルドグリーン (Green)", color = Color3.fromRGB(46, 204, 113)},
+	{name = "パープル (Purple)", color = Color3.fromRGB(155, 89, 182)},
+	{name = "レッド (Red)", color = Color3.fromRGB(231, 76, 60)}
+}
+local colorPickBtn = createMenuButton(page4, "枠の色: ゴールド (Gold)", 2)
+colorPickBtn.MouseButton1Click:Connect(function()
+	colorIndex = colorIndex + 1
+	if colorIndex > #colorThemes then colorIndex = 1 end
+	local selected = colorThemes[colorIndex]
+	colorPickBtn.Text = "  枠の色: " .. selected.name
+	applyBorderColor(selected.color)
+end)
+
+
+---------------------------------------------------------
+-- ロジック定義
+---------------------------------------------------------
+local function getClosestPlayer()
+	local myChar = LocalPlayer.Character
+	if not myChar or not myChar:FindFirstChild("HumanoidRootPart") then return nil end
+	local myPos = myChar.HumanoidRootPart.Position
+	local closest, shortest = nil, math.huge
+	for _, p in ipairs(Players:GetPlayers()) do
+		if p ~= LocalPlayer and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
+			local dist = (p.Character.HumanoidRootPart.Position - myPos).Magnitude
+			if dist < shortest then
+				shortest = dist
+				closest = p
+			end
+		end
+	end
+	return closest
+end
+
+local function getClosestBlogmanItem()
+	local myChar = LocalPlayer.Character
+	if not myChar or not myChar:FindFirstChild("HumanoidRootPart") then return nil end
+	local myPos = myChar.HumanoidRootPart.Position
+	local closestItem, shortest = nil, math.huge
+	for _, obj in ipairs(workspace:GetDescendants()) do
+		if not obj:IsDescendantOf(myChar) and (obj:IsA("BasePart") or obj:IsA("Model") or obj:IsA("Tool")) then
+			local nameLower = obj.Name:lower()
+			if nameLower:find("blogman") or nameLower:find("ブログマン") or nameLower:find("blobman") then
+				local part = obj:IsA("BasePart") and obj or obj:FindFirstChildOfClass("BasePart")
+				if part then
+					local dist = (part.Position - myPos).Magnitude
+					if dist < shortest then
+						shortest = dist
+						closestItem = part
+					end
+				end
+			end
+		end
+	end
+	return closestItem
+end
+
+-- FF内アイテム持ち込み
+local isFFBringActive = false
+ffBringBtn.MouseButton1Click:Connect(function()
+	isFFBringActive = not isFFBringActive
+	ffBringBtn.Text = isFFBringActive and "  FF内アイテム持込: ON" or "  FF内アイテム持込: OFF"
+
+	if isFFBringActive then
+		task.spawn(function()
+			while isFFBringActive do
+				for _, v in ipairs(workspace:GetDescendants()) do
+					if v:IsA("ForceField") or (v:IsA("BasePart") and (v.Name:lower():find("barrier") or v.Name:lower():find("forcefield") or v.Name:lower():find("shield") or v.Name:lower():find("house"))) then
+						if v:IsA("BasePart") then
+							v.CanCollide = false
+						end
+					end
+				end
+				
+				local myChar = LocalPlayer.Character
+				if myChar then
+					for _, tool in ipairs(myChar:GetChildren()) do
+						if tool:IsA("Tool") then
+							for _, p in ipairs(tool:GetDescendants()) do
+								if p:IsA("BasePart") then
+									p.CanCollide = false
+								end
+							end
+						end
+					end
+				end
+				RunService.Heartbeat:Wait()
+			end
+		end)
+	end
+end)
+
+-- サイレントエイム
+local isSilentAimActive = false
+local aimConnection = nil
+
+silentAimBtn.MouseButton1Click:Connect(function()
+	isSilentAimActive = not isSilentAimActive
+	silentAimBtn.Text = isSilentAimActive and "  サイレントエイム: ON" or "  サイレントエイム: OFF"
+
+	if isSilentAimActive then
+		aimConnection = UserInputService.InputBegan:Connect(function(input, gpe)
+			if gpe then return end
+			if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+				local targetPlayer = getClosestPlayer()
+				if targetPlayer and targetPlayer.Character then
+					local targetHead = targetPlayer.Character:FindFirstChild("Head") or targetPlayer.Character:FindFirstChild("HumanoidRootPart")
+					local myChar = LocalPlayer.Character
+					if targetHead and myChar then
+						local tool = myChar:FindFirstChildOfClass("Tool")
+						if tool then
+							for _, v in ipairs(tool:GetDescendants()) do
+								if v:IsA("RemoteEvent") or v:IsA("RemoteFunction") then
+									pcall(function()
+										v:FireServer(targetHead.Position, targetHead)
+									end)
+								end
+							end
+							for _, part in ipairs(workspace:GetChildren()) do
+								if part:IsA("BasePart") and (part.Name:lower():find("bullet") or part.Name:lower():find("projectile")) then
+									part.CFrame = targetHead.CFrame
+								end
+							end
+						end
+					end
+				end
+			end
+		end)
+	else
+		if aimConnection then
+			aimConnection:Disconnect()
+			aimConnection = nil
+		end
+	end
+end)
+
+-- 触れたアイテムを弾き飛ばす
+local isTouchFlyActive = false
+touchFlyItemBtn.MouseButton1Click:Connect(function()
+	isTouchFlyActive = not isTouchFlyActive
+	touchFlyItemBtn.Text = isTouchFlyActive and "  触れたアイテムを弾き飛ばし: ON" or "  触れたアイテムを弾き飛ばし: OFF"
+
+	if isTouchFlyActive then
+		task.spawn(function()
+			local overlapParams = OverlapParams.new()
+			overlapParams.FilterType = Enum.RaycastFilterType.Exclude
+
+			while isTouchFlyActive do
+				local myChar = LocalPlayer.Character
+				if myChar and myChar:FindFirstChild("HumanoidRootPart") then
+					local myHRP = myChar.HumanoidRootPart
+					
+					local excludeList = {myChar}
+					for _, p in ipairs(Players:GetPlayers()) do
+						if p.Character then
+							table.insert(excludeList, p.Character)
+						end
+					end
+					overlapParams.FilterDescendantsInstances = excludeList
+
+					local parts = workspace:GetPartsInPart(myHRP, overlapParams)
+					for _, obj in ipairs(parts) do
+						if obj:IsA("BasePart") and not obj.Anchored then
+							local flyDir = (obj.Position - myHRP.Position).Unit
+							if flyDir ~= flyDir then flyDir = myHRP.CFrame.LookVector end
+							local pushVelocity = (flyDir * 400) + Vector3.new(0, 200, 0)
+							obj.Velocity = pushVelocity
+							pcall(function()
+								obj.AssemblyLinearVelocity = pushVelocity
+							end)
+						end
+					end
+				end
+				task.wait(0.1)
+			end
+		end)
+	end
+end)
+
+-- Blogman
+local isFastShootActive = false
+blogmanBtn.MouseButton1Click:Connect(function()
+	isFastShootActive = not isFastShootActive
+	blogmanBtn.Text = isFastShootActive and "  Blogman 爆速掴み＆自動射撃: ON" or "  Blogman 爆速掴み＆自動射撃: OFF"
+	if isFastShootActive then
+		task.spawn(function()
+			while isFastShootActive do
+				local myChar = LocalPlayer.Character
+				if myChar and myChar:FindFirstChild("HumanoidRootPart") then
+					local myHRP = myChar.HumanoidRootPart
+					local blogmanItem = getClosestBlogmanItem()
+					if blogmanItem then
+						myHRP.CFrame = blogmanItem.CFrame * CFrame.new(0, 3, 0)
+					end
+					local targetPlayer = getClosestPlayer()
+					if targetPlayer and targetPlayer.Character and targetPlayer.Character:FindFirstChild("HumanoidRootPart") then
+						myHRP.CFrame = targetPlayer.Character.HumanoidRootPart.CFrame * CFrame.new(0, 1, -2)
+						for _, item in ipairs(LocalPlayer.Backpack:GetChildren()) do
+							if item:IsA("Tool") then item.Parent = myChar end
+						end
+						for _, tool in ipairs(myChar:GetChildren()) do
+							if tool:IsA("Tool") then tool:Activate() end
+						end
+					end
+				end
+				RunService.Heartbeat:Wait()
+			end
+		end)
+	end
+end)
+
+-- 全アイテム吸引
+itemBringBtn.MouseButton1Click:Connect(function()
+	local myChar = LocalPlayer.Character
+	if not myChar or not myChar:FindFirstChild("HumanoidRootPart") then return end
+	local targetCFrame = myChar.HumanoidRootPart.CFrame
+	task.spawn(function()
+		for loop = 1, 10 do
+			for _, obj in ipairs(workspace:GetDescendants()) do
+				if not obj:IsDescendantOf(myChar) then
+					local isPlayerPart = false
+					for _, p in ipairs(Players:GetPlayers()) do
+						if p.Character and obj:IsDescendantOf(p.Character) then isPlayerPart = true break end
+					end
+					if not isPlayerPart then
+						if obj:IsA("Tool") and obj:FindFirstChild("Handle") then
+							obj.Handle.CFrame = targetCFrame
+						elseif obj:IsA("BasePart") and not obj.Anchored then
+							if obj:FindFirstChildOfClass("TouchTransmitter") or obj:FindFirstChildOfClass("ClickDetector") or obj.Name:lower():find("item") or obj.Name:lower():find("coin") then
+								obj.CFrame = targetCFrame
+								obj.Velocity = Vector3.new(0, 0, 0)
+							end
+						end
+					end
+				end
+			end
+			task.wait(0.05)
+		end
+	end)
+	itemBringBtn.Text = "  引き寄せ完了!"
+	task.wait(1.5)
+	itemBringBtn.Text = "  全アイテムを完全吸引"
+end)
+
+-- 津波発生
+local activeTsunami, moveConnection
+tsunamiBtn.MouseButton1Click:Connect(function()
+	if moveConnection then moveConnection:Disconnect() moveConnection = nil end
+	if activeTsunami then activeTsunami:Destroy() activeTsunami = nil end
+
+	local myChar = LocalPlayer.Character
+	if not myChar or not myChar:FindFirstChild("HumanoidRootPart") then return end
+	local hrp = myChar.HumanoidRootPart
+	local farPosition = hrp.CFrame * CFrame.new(0, 20, -500)
+
+	local tsunami = Instance.new("Part")
+	tsunami.Name = "TsunamiWave"
+	tsunami.Size = Vector3.new(400, 80, 15)
+	tsunami.CFrame = CFrame.new(farPosition.Position, hrp.Position)
+	tsunami.Anchored = true
+	tsunami.CanCollide = false
+	tsunami.Material = Enum.Material.ForceField
+	tsunami.Color = Color3.fromRGB(0, 120, 255)
+	tsunami.Transparency = 0.25
+	tsunami.Parent = workspace
+	activeTsunami = tsunami
+
+	tsunami.Touched:Connect(function(hit)
+		if not hit or hit:IsDescendantOf(myChar) then return end
+		local pushVector = tsunami.CFrame.LookVector * 250 + Vector3.new(0, 150, 0)
+		local parentModel = hit.Parent
+		if parentModel and parentModel:FindFirstChildOfClass("Humanoid") then
+			local targetHRP = parentModel:FindFirstChild("HumanoidRootPart")
+			if targetHRP then targetHRP.Velocity = pushVector end
+		elseif hit:IsA("BasePart") and not hit.Anchored then
+			hit.Velocity = pushVector
+		end
+	end)
+
+	moveConnection = RunService.Heartbeat:Connect(function()
+		if tsunami and tsunami.Parent then
+			tsunami.CFrame = tsunami.CFrame * CFrame.new(0, 0, -2.0)
+		else
+			if moveConnection then moveConnection:Disconnect() moveConnection = nil end
+		end
+	end)
+end)
+
+-- Anti-Kick
+local isAntiKickEnabled = false
+antiKickBtn.MouseButton1Click:Connect(function()
+	isAntiKickEnabled = not isAntiKickEnabled
+	antiKickBtn.Text = isAntiKickEnabled and "  Anti-Kick: ON" or "  Anti-Kick: OFF"
+	if isAntiKickEnabled then
+		pcall(function()
+			local mt = getrawmetatable(game)
+			if setreadonly then setreadonly(mt, false) end
+			local oldNamecall = mt.__namecall
+			mt.__namecall = newcclosure(function(self, ...)
+				if tostring(getnamecallmethod()):lower() == "kick" and self == LocalPlayer then
+					return
+				end
+				return oldNamecall(self, ...)
+			end)
+		end)
+	end
+end)
+
+-- ラグ削除
+lagRemoveBtn.MouseButton1Click:Connect(function()
+	Lighting.GlobalShadows = false
+	Lighting.FogEnd = 9e9
+	for _, v in ipairs(Lighting:GetChildren()) do
+		if v:IsA("PostEffect") or v:IsA("BlurEffect") or v:IsA("SunRaysEffect") or v:IsA("BloomEffect") then v.Enabled = false end
+	end
+	for _, desc in ipairs(workspace:GetDescendants()) do
+		if desc:IsA("ParticleEmitter") or desc:IsA("Trail") or desc:IsA("Smoke") or desc:IsA("Fire") or desc:IsA("Sparkles") then
+			desc.Enabled = false
+		elseif desc:IsA("Decal") or desc:IsA("Texture") then
+			desc.Texture = ""
+		end
+	end
+	lagRemoveBtn.Text = "  ラグ削除: 完了"
+end)
+
+-- 全員爆速吹き飛ばし
+local isLineLaunchActive = false
+launchAllBtn.MouseButton1Click:Connect(function()
+	isLineLaunchActive = not isLineLaunchActive
+	launchAllBtn.Text = isLineLaunchActive and "  全員爆速吹き飛ばし: ON" or "  全員爆速吹き飛ばし: OFF"
+	if isLineLaunchActive then
+		task.spawn(function()
+			while isLineLaunchActive do
+				local myChar = LocalPlayer.Character
+				if myChar and myChar:FindFirstChild("HumanoidRootPart") then
+					local myHRP = myChar.HumanoidRootPart
+					for _, p in ipairs(Players:GetPlayers()) do
+						if p ~= LocalPlayer and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
+							local targetHRP = p.Character.HumanoidRootPart
+							local dir = (targetHRP.Position - myHRP.Position).Unit
+							if dir ~= dir then dir = myHRP.CFrame.LookVector end
+							targetHRP.Velocity = (dir * 2000) + Vector3.new(0, 1000, 0)
+						end
+					end
+				end
+				RunService.Heartbeat:Wait()
+			end
+		end)
+	end
+end)
+
+-- 自動飛行
+local isAutoFlyActive, flyBV, flyBG = false, nil, nil
+autoFlyBtn.MouseButton1Click:Connect(function()
+	isAutoFlyActive = not isAutoFlyActive
+	autoFlyBtn.Text = isAutoFlyActive and "  Fly automatically: ON" or "  Fly automatically: OFF"
+	local myChar = LocalPlayer.Character
+	if not myChar or not myChar:FindFirstChild("HumanoidRootPart") then return end
+	local hrp = myChar.HumanoidRootPart
+	local humanoid = myChar:FindFirstChildOfClass("Humanoid")
+
+	if isAutoFlyActive then
+		if humanoid then humanoid.PlatformStand = true end
+		flyBV = Instance.new("BodyVelocity")
+		flyBV.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+		flyBV.Parent = hrp
+		flyBG = Instance.new("BodyGyro")
+		flyBG.MaxTorque = Vector3.new(9e9, 9e9, 9e9)
+		flyBG.Parent = hrp
+
+		task.spawn(function()
+			while isAutoFlyActive and myChar and myChar.Parent do
+				local camera = workspace.CurrentCamera
+				if camera then
+					flyBV.Velocity = camera.CFrame.LookVector * 50
+					flyBG.CFrame = camera.CFrame
+				end
+				RunService.RenderStepped:Wait()
+			end
+			if flyBV then flyBV:Destroy() end
+			if flyBG then flyBG:Destroy() end
+			if humanoid then humanoid.PlatformStand = false end
+		end)
+	else
+		if flyBV then flyBV:Destroy() end
+		if flyBG then flyBG:Destroy() end
+		if humanoid then humanoid.PlatformStand = false end
+	end
+end)
+
+-- 不動
+local isImmovableActive = false
+immovableBtn.MouseButton1Click:Connect(function()
+	isImmovableActive = not isImmovableActive
+	immovableBtn.Text = isImmovableActive and "  不動(掴み/押し無効): ON" or "  不動(掴み/押し無効): OFF"
+	if isImmovableActive then
+		task.spawn(function()
+			while isImmovableActive do
+				local myCharActual = LocalPlayer.Character
+				if myCharActual and myCharActual:FindFirstChild("HumanoidRootPart") then
+					local hrp = myCharActual.HumanoidRootPart
+					hrp.Velocity = Vector3.zero
+					hrp.RotVelocity = Vector3.zero
+					hrp.AssemblyLinearVelocity = Vector3.zero
+					hrp.AssemblyAngularVelocity = Vector3.zero
+				end
+				RunService.Heartbeat:Wait()
+			end
+		end)
+	end
+end)
+
+-- 掴んだ人の足を消去
+local isRemoveLegsActive = false
+removeLegsOnGrabBtn.MouseButton1Click:Connect(function()
+	isRemoveLegsActive = not isRemoveLegsActive
+	removeLegsOnGrabBtn.Text = isRemoveLegsActive and "  掴んだ人の足を消去: ON" or "  掴んだ人の足を消去: OFF"
+
+	if isRemoveLegsActive then
+		task.spawn(function()
+			while isRemoveLegsActive do
+				local myChar = LocalPlayer.Character
+				if myChar and myChar:FindFirstChild("HumanoidRootPart") then
+					local myHRP = myChar.HumanoidRootPart
+					local closestP = getClosestPlayer()
+					if closestP and closestP.Character then
+						local targetHRP = closestP.Character:FindFirstChild("HumanoidRootPart")
+						if targetHRP then
+							local dist = (targetHRP.Position - myHRP.Position).Magnitude
+							if dist <= 6 then
+								for _, partName in ipairs({"LeftLeg", "RightLeg", "LeftLowerLeg", "RightLowerLeg", "LeftUpperLeg", "RightUpperLeg", "Left Foot", "Right Foot"}) do
+									local leg = closestP.Character:FindFirstChild(partName)
+									if leg then
+										leg:Destroy()
+									end
+								end
+							end
+						end
+					end
+				end
+				task.wait(0.2)
+			end
+		end)
+	end
+end)
+
+-- 超・ラグ激減
+antiLagBtn.MouseButton1Click:Connect(function()
+	Lighting.GlobalShadows = false
+	Lighting.FogEnd = 9e9
+	Lighting.Brightness = 2
+	for _, v in ipairs(Lighting:GetChildren()) do
+		if v:IsA("PostEffect") or v:IsA("BlurEffect") or v:IsA("SunRaysEffect") or v:IsA("BloomEffect") or v:IsA("Atmosphere") or v:IsA("Sky") then
+			v:Destroy()
+		end
+	end
+	for _, desc in ipairs(workspace:GetDescendants()) do
+		if desc:IsA("ParticleEmitter") or desc:IsA("Trail") or desc:IsA("Smoke") or desc:IsA("Fire") or desc:IsA("Sparkles") or desc:IsA("Explosion") then
+			desc:Destroy()
+		elseif desc:IsA("Decal") or desc:IsA("Texture") then
+			desc:Destroy()
+		elseif desc:IsA("BasePart") then
+			desc.Material = Enum.Material.SmoothPlastic
+			desc.Reflectance = 0
+			desc.CastShadow = false
+		elseif desc:IsA("MeshPart") then
+			desc.Material = Enum.Material.SmoothPlastic
+			desc.TextureID = ""
+			desc.CastShadow = false
+		end
+	end
+	antiLagBtn.Text = "  超・ラグ激減: 完了（激軽化！）"
+	task.wait(1.5)
+	antiLagBtn.Text = "  超・ラグ激減（Anti-lag+）を実行"
+end)
+
+-- FPS表示カウンター
+local isFpsActive = false
+local fpsGui = nil
+local fpsConnection = nil
+
+fpsToggleBtn.MouseButton1Click:Connect(function()
+	isFpsActive = not isFpsActive
+	fpsToggleBtn.Text = isFpsActive and "  FPS表示カウンター: ON" or "  FPS表示カウンター: OFF"
+
+	if isFpsActive then
+		fpsGui = Instance.new("ScreenGui")
+		fpsGui.Name = "FpsCounterGui"
+		fpsGui.ResetOnSpawn = false
+		fpsGui.Parent = PlayerGui
+
+		local fpsFrame = Instance.new("TextButton")
+		fpsFrame.Size = UDim2.new(0, 140, 0, 40)
+		fpsFrame.Position = UDim2.new(0.5, -70, 0.4, -20)
+		fpsFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+		fpsFrame.TextColor3 = Color3.fromRGB(255, 255, 255)
+		fpsFrame.TextSize = 15
+		fpsFrame.Font = Enum.Font.SourceSansBold
+		fpsFrame.Text = "FPS: 60"
+		fpsFrame.AutoButtonColor = false
+		fpsFrame.Parent = fpsGui
+
+		local fpsStroke = Instance.new("UIStroke")
+		fpsStroke.Color = BORDER_COLOR
+		fpsStroke.Thickness = 1.5
+		fpsStroke.Parent = fpsFrame
+		table.insert(updateBorderColorFuncs, function(c) fpsStroke.Color = c end)
+
+		local fpsCorner = Instance.new("UICorner")
+		fpsCorner.CornerRadius = UDim.new(0, 6)
+		fpsCorner.Parent = fpsFrame
+
+		makeDraggable(fpsFrame)
+
+		local lastTick = tick()
+		local frameCount = 0
+		fpsConnection = RunService.RenderStepped:Connect(function()
+			frameCount = frameCount + 1
+			local currentTick = tick()
+			if currentTick - lastTick >= 0.5 then
+				local fps = math.floor((frameCount / (currentTick - lastTick)) + 0.5)
+				fpsFrame.Text = "FPS: " .. tostring(fps)
+				frameCount = 0
+				lastTick = currentTick
+			end
+		end)
+	else
+		if fpsConnection then
+			fpsConnection:Disconnect()
+			fpsConnection = nil
+		end
+		if fpsGui then
+			fpsGui:Destroy()
+			fpsGui = nil
+		end
+	end
+end)
+
+-- 他プレイヤー激重化
+local isLagOtherActive = false
+lagOtherBtn.MouseButton1Click:Connect(function()
+	isLagOtherActive = not isLagOtherActive
+	lagOtherBtn.Text = isLagOtherActive and "  他プレイヤー激重化: ON" or "  他プレイヤー激重化: OFF"
+
+	if isLagOtherActive then
+		task.spawn(function()
+			while isLagOtherActive do
+				for _, p in ipairs(Players:GetPlayers()) do
+					if p ~= LocalPlayer and p.Character then
+						for _, part in ipairs(p.Character:GetChildren()) do
+							if part:IsA("BasePart") then
+								pcall(function()
+									part.Velocity = Vector3.new(math.random(-50, 50), math.random(100, 300), math.random(-50, 50))
+								end)
+							end
+						end
+					end
+				end
+				task.wait(0.2)
+			end
+		end)
+	end
+end)
