@@ -1,0 +1,118 @@
+-- ==========================================
+-- キー認証チェック（入っていない/違う場合は即Kick）
+-- ==========================================
+local requiredKey = "trial" -- ここで正しいキーを設定
+
+if not script_key or script_key ~= requiredKey then
+    game.Players.LocalPlayer:Kick("【Dolphin Home】Keyが入力されていないか、間違っています！")
+    return
+end
+
+-- ==========================================
+-- 認証成功後に動くメインのスクリプト（GUIメニュー）
+-- ==========================================
+local CoreGui = game:GetService("CoreGui")
+local Players = game:GetService("Players")
+local localPlayer = Players.LocalPlayer
+
+-- すでに開いていたらいったん消す
+if CoreGui:FindFirstChild("DolphinHomeGUI") then
+    CoreGui.DolphinHomeGUI:Destroy()
+end
+
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "DolphinHomeGUI"
+ScreenGui.Parent = CoreGui
+
+-- メインの枠
+local MainFrame = Instance.new("Frame")
+MainFrame.Size = UDim2.new(0, 400, 0, 260)
+MainFrame.Position = UDim2.new(0.5, -200, 0.5, -130)
+MainFrame.BackgroundColor3 = Color3.fromRGB(15, 23, 42)
+MainFrame.BorderSizePixel = 0
+MainFrame.Active = true
+MainFrame.Draggable = true
+MainFrame.Parent = ScreenGui
+
+local UICorner = Instance.new("UICorner")
+UICorner.CornerRadius = UDim.new(0, 16)
+UICorner.Parent = MainFrame
+
+-- タイトル
+local Title = Instance.new("TextLabel")
+Title.Size = UDim2.new(1, 0, 0, 50)
+Title.BackgroundTransparency = 1
+Title.Text = "🐬 Dolphin Home - Verified"
+Title.TextColor3 = Color3.fromRGB(255, 255, 255)
+Title.TextSize = 18
+Title.Font = Enum.Font.GothamBold
+Title.Parent = MainFrame
+
+-- スピードアップボタン
+local SpeedBtn = Instance.new("TextButton")
+SpeedBtn.Size = UDim2.new(0.9, 0, 0, 45)
+SpeedBtn.Position = UDim2.new(0.05, 0, 0, 60)
+SpeedBtn.BackgroundColor3 = Color3.fromRGB(30, 41, 59)
+SpeedBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+SpeedBtn.TextSize = 14
+SpeedBtn.Font = Enum.Font.GothamBold
+SpeedBtn.Text = "⚡ スピードアップ (OFF)"
+SpeedBtn.Parent = MainFrame
+
+local BtnCorner1 = Instance.new("UICorner")
+BtnCorner1.CornerRadius = UDim.new(0, 10)
+BtnCorner1.Parent = SpeedBtn
+
+local speedEnabled = false
+SpeedBtn.MouseButton1Click:Connect(function()
+    speedEnabled = not speedEnabled
+    if localPlayer.Character and localPlayer.Character:FindFirstChild("Humanoid") then
+        if speedEnabled then
+            localPlayer.Character.Humanoid.WalkSpeed = 32
+            SpeedBtn.BackgroundColor3 = Color3.fromRGB(16, 185, 129)
+            SpeedBtn.Text = "⚡ スピードアップ (ON)"
+        else
+            localPlayer.Character.Humanoid.WalkSpeed = 16
+            SpeedBtn.BackgroundColor3 = Color3.fromRGB(30, 41, 59)
+            SpeedBtn.Text = "⚡ スピードアップ (OFF)"
+        end
+    end
+end)
+
+-- サイトに戻るボタン（URLコピー）
+local SiteBtn = Instance.new("TextButton")
+SiteBtn.Size = UDim2.new(0.9, 0, 0, 45)
+SiteBtn.Position = UDim2.new(0.05, 0, 0, 115)
+SiteBtn.BackgroundColor3 = Color3.fromRGB(79, 70, 229)
+SiteBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+SiteBtn.TextSize = 14
+SiteBtn.Font = Enum.Font.GothamBold
+SiteBtn.Text = "🌐 元のサイトのURLをコピー"
+SiteBtn.Parent = MainFrame
+
+local BtnCorner2 = Instance.new("UICorner")
+BtnCorner2.CornerRadius = UDim.new(0, 10)
+BtnCorner2.Parent = SiteBtn
+
+SiteBtn.MouseButton1Click:Connect(function()
+    if setclipboard then
+        setclipboard("https://zhangguchanyuuxi265-cmyk.github.io/sc/")
+        SiteBtn.Text = "サイトのURLをコピーしました！"
+        task.wait(2)
+        SiteBtn.Text = "🌐 元のサイトのURLをコピー"
+    end
+end)
+
+-- 閉じるボタン
+local CloseBtn = Instance.new("TextButton")
+CloseBtn.Size = UDim2.new(0, 30, 0, 30)
+CloseBtn.Position = UDim2.new(1, -40, 0, 10)
+CloseBtn.BackgroundTransparency = 1
+CloseBtn.Text = "✕"
+CloseBtn.TextColor3 = Color3.fromRGB(148, 163, 184)
+CloseBtn.TextSize = 16
+CloseBtn.Parent = MainFrame
+
+CloseBtn.MouseButton1Click:Connect(function()
+    ScreenGui:Destroy()
+end)
