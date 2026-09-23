@@ -1,0 +1,417 @@
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+
+-- 既存のGUIがあれば削除
+if playerGui:FindFirstChild("RagdollMenuGui") then
+    playerGui.RagdollMenuGui:Destroy()
+end
+
+-- 画面用Guiの作成
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "RagdollMenuGui"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.Parent = playerGui
+
+-- メインパネル（ボタン2つ分に合わせて高さを135ピクセルに変更）
+local MainFrame = Instance.new("Frame")
+MainFrame.Size = UDim2.new(0, 260, 0, 135)
+MainFrame.Position = UDim2.new(0, 20, 0, 20)
+MainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
+MainFrame.BorderSizePixel = 0
+MainFrame.Active = true
+MainFrame.Draggable = true
+MainFrame.Parent = ScreenGui
+Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 10)
+
+-- タイトル
+local Title = Instance.new("TextLabel", MainFrame)
+Title.Size = UDim2.new(1, -50, 0, 35)
+Title.Position = UDim2.new(0, 15, 0, 0)
+Title.BackgroundTransparency = 1
+Title.Text = "🍌 バナナHub"
+Title.TextColor3 = Color3.fromRGB(150, 170, 255)
+Title.Font = Enum.Font.GothamBold
+Title.TextSize = 16
+Title.TextXAlignment = Enum.TextXAlignment.Left
+
+-- 枠を畳む（最小化/最大化）ボタン
+local MinimizeBtn = Instance.new("TextButton", MainFrame)
+MinimizeBtn.Size = UDim2.new(0, 24, 0, 24)
+MinimizeBtn.Position = UDim2.new(1, -32, 0, 5.5)
+MinimizeBtn.BackgroundColor3 = Color3.fromRGB(45, 45, 60)
+MinimizeBtn.Text = "-"
+MinimizeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+MinimizeBtn.Font = Enum.Font.GothamBold
+MinimizeBtn.TextSize = 14
+Instance.new("UICorner", MinimizeBtn).CornerRadius = UDim.new(0, 6)
+
+-- 中身をまとめるコンテナ（折りたたみ用）
+local ContentFrame = Instance.new("Frame", MainFrame)
+ContentFrame.Size = UDim2.new(1, 0, 1, -35)
+ContentFrame.Position = UDim2.new(0, 0, 0, 35)
+ContentFrame.BackgroundTransparency = 1
+
+-- 畳み込み処理
+local isMinimized = false
+MinimizeBtn.MouseButton1Click:Connect(function()
+    isMinimized = not isMinimized
+    ContentFrame.Visible = not isMinimized
+    if isMinimized then
+        MainFrame.Size = UDim2.new(0, 260, 0, 35)
+        MinimizeBtn.Text = "+"
+    else
+        MainFrame.Size = UDim2.new(0, 260, 0, 135)
+        MinimizeBtn.Text = "-"
+    end
+end)
+
+-- 状態管理用変数（Ragdoll Mode用）
+local active = false
+local renderConnection = nil
+local healthConnection = nil
+local jumpConnection = nil
+local currentYaw = 0
+local currentY = nil
+local yVelocity = 0
+local isJumping = false
+
+-- 状態管理用変数（Float & Fall用）
+local floatActive = false
+local floatRenderConnection = nil
+local floatHealthConnection = nil
+local floatYaw = 0
+local floatAirY = nil
+
+-- トグルスイッチ作成関数
+local function CreateToggle(name, yPos, callback)
+    local Container = Instance.new("Frame", ContentFrame)
+    Container.Size = UDim2.new(1, -30, 0, 38)
+    Container.Position = UDim2.new(0, 15, 0, yPos)
+    Container.BackgroundColor3 = Color3.fromRGB(35, 35, 45)
+    Instance.new("UICorner", Container).CornerRadius = UDim.new(0, 8)
+
+    local Label = Instance.new("TextLabel", Container)
+    Label.Size = UDim2.new(0.6, 0, 1, 0)
+    Label.Position = UDim2.new(0.05, 0, 0, 0)
+    Label.BackgroundTransparency = 1
+    Label.Text = name
+    Label.TextColor3 = Color3.fromRGB(255, 255, 255)
+    Label.Font = Enum.Font.Gotham
+    Label.TextSize = 13
+    Label.TextXAlignment = Enum.TextXAlignment.Left
+
+    local SwitchBg = Instance.new("TextButton", Container)
+    SwitchBg.Size = UDim2.new(0, 42, 0, 20)
+    SwitchBg.Position = UDim2.new(0.85, -20, 0.5, -10)
+    SwitchBg.BackgroundColor3 = Color3.fromRGB(60, 60, 80)
+    SwitchBg.Text = ""
+    Instance.new("UICorner", SwitchBg).CornerRadius = UDim.new(1, 0)
+
+    local Knob = Instance.new("Frame", SwitchBg)
+    Knob.Size = UDim2.new(0, 16, 0, 16)
+    Knob.Position = UDim2.new(0, 2, 0.5, -8)
+    Knob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    Instance.new("UICorner", Knob).CornerRadius = UDim.new(1, 0)
+
+    local isOn = false
+    SwitchBg.MouseButton1Click:Connect(function()
+        isOn = not isOn
+        if isOn then
+            SwitchBg.BackgroundColor3 = Color3.fromRGB(80, 100, 255)
+            Knob:TweenPosition(UDim2.new(0, 24, 0.5, -8), "Out", "Quad", 0.2)
+        else
+            SwitchBg.BackgroundColor3 = Color3.fromRGB(60, 60, 80)
+            Knob:TweenPosition(UDim2.new(0, 2, 0.5, -8), "Out", "Quad", 0.2)
+        end
+        if callback then
+            callback(isOn)
+        end
+    end)
+end
+
+-- 1つ目のボタン: Ragdoll Mode
+CreateToggle("Ragdoll Mode", 5, function(state)
+    active = state
+    local character = player.Character
+    if not character then return end
+    
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    local rootPart = character:FindFirstChild("HumanoidRootPart")
+    local cam = workspace.CurrentCamera
+
+    if active then
+        if humanoid then
+            humanoid.MaxHealth = math.huge
+            humanoid.Health = math.huge
+            pcall(function()
+                humanoid:SetStateEnabled(Enum.HumanoidStateType.Dead, false)
+                humanoid:SetStateEnabled(Enum.HumanoidStateType.GettingUp, false)
+            end)
+            
+            healthConnection = humanoid.Changed:Connect(function(property)
+                if property == "Health" and humanoid.Health < humanoid.MaxHealth then
+                    humanoid.Health = humanoid.MaxHealth
+                end
+            end)
+            
+            humanoid.PlatformStand = true
+        end
+        
+        if rootPart and humanoid then
+            local rayParams = RaycastParams.new()
+            rayParams.FilterDescendantsInstances = {character}
+            rayParams.FilterType = Enum.RaycastFilterType.Exclude
+            
+            currentY = rootPart.Position.Y
+            yVelocity = 0
+            isJumping = false
+            
+            jumpConnection = UserInputService.InputBegan:Connect(function(input, gameProcessed)
+                if gameProcessed then return end
+                if input.KeyCode == Enum.KeyCode.Space or input.KeyCode == Enum.KeyCode.ButtonA then
+                    if not isJumping then
+                        isJumping = true
+                        yVelocity = 1.8
+                    end
+                end
+            end)
+            
+            local speedMultiplier = 1.3
+            
+            renderConnection = RunService.RenderStepped:Connect(function(dt)
+                if not character or not rootPart or not humanoid then return end
+                humanoid.PlatformStand = true
+                
+                local moveDir = humanoid.MoveDirection
+                local targetYaw = currentYaw
+                local currentSpeed = humanoid.WalkSpeed * speedMultiplier
+                
+                if moveDir.Magnitude > 0 then
+                    targetYaw = math.atan2(-moveDir.X, -moveDir.Z)
+                    rootPart.Velocity = Vector3.new(moveDir.X * currentSpeed, rootPart.Velocity.Y, moveDir.Z * currentSpeed)
+                else
+                    local camLook = cam.CFrame.LookVector
+                    targetYaw = math.atan2(-camLook.X, -camLook.Z)
+                    rootPart.Velocity = Vector3.new(0, rootPart.Velocity.Y, 0)
+                end
+                
+                local diff = targetYaw - currentYaw
+                while diff > math.pi do diff = diff - math.pi * 2 end
+                while diff < -math.pi do diff = diff + math.pi * 2 end
+                currentYaw = currentYaw + diff * math.clamp(dt * 12, 0, 1)
+                
+                local currentPos = rootPart.Position
+                local rayResult = workspace:Raycast(currentPos + Vector3.new(0, 2, 0), Vector3.new(0, -5, 0), rayParams)
+                local targetY = currentPos.Y
+                if rayResult then
+                    targetY = rayResult.Position.Y + 0.8
+                end
+                
+                if isJumping then
+                    currentY = currentY + yVelocity
+                    yVelocity = yVelocity - 0.25
+                    
+                    if currentY <= targetY then
+                        currentY = targetY
+                        isJumping = false
+                        yVelocity = 0
+                    end
+                else
+                    if rayResult then
+                        currentY = targetY
+                    end
+                end
+                
+                rootPart.CFrame = CFrame.new(currentPos.X, currentY, currentPos.Z) * CFrame.Angles(0, currentYaw, 0) * CFrame.Angles(math.rad(90), 0, 0)
+            end)
+        end
+        
+    else
+        if renderConnection then
+            renderConnection:Disconnect()
+            renderConnection = nil
+        end
+        if healthConnection then
+            healthConnection:Disconnect()
+            healthConnection = nil
+        end
+        if jumpConnection then
+            jumpConnection:Disconnect()
+            jumpConnection = nil
+        end
+        
+        if humanoid then
+            pcall(function()
+                humanoid:SetStateEnabled(Enum.HumanoidStateType.Dead, true)
+                humanoid:SetStateEnabled(Enum.HumanoidStateType.GettingUp, true)
+            end)
+            humanoid.MaxHealth = 100
+            humanoid.Health = 100
+            humanoid.PlatformStand = false
+        end
+    end
+end)
+
+-- 2つ目のボタン: Float & Fall (高さアップ版: floatOffsetを10.0に変更)
+CreateToggle("Float & Fall", 48, function(state)
+    floatActive = state
+    local character = player.Character
+    if not character then return end
+    
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    local rootPart = character:FindFirstChild("HumanoidRootPart")
+    local cam = workspace.CurrentCamera
+
+    if floatActive then
+        if humanoid then
+            humanoid.MaxHealth = math.huge
+            humanoid.Health = math.huge
+            pcall(function()
+                humanoid:SetStateEnabled(Enum.HumanoidStateType.Dead, false)
+                humanoid:SetStateEnabled(Enum.HumanoidStateType.GettingUp, false)
+            end)
+            
+            floatHealthConnection = humanoid.Changed:Connect(function(property)
+                if property == "Health" and humanoid.Health < humanoid.MaxHealth then
+                    humanoid.Health = humanoid.MaxHealth
+                end
+            end)
+            
+            humanoid.PlatformStand = true
+        end
+        
+        if rootPart and humanoid then
+            cam.CameraSubject = rootPart
+            
+            local rayParams = RaycastParams.new()
+            rayParams.FilterDescendantsInstances = {character}
+            rayParams.FilterType = Enum.RaycastFilterType.Exclude
+            
+            local startPos = rootPart.Position
+            floatYaw = 0
+            
+            local startCFrame = rootPart.CFrame
+            local _, yaw, _ = startCFrame:ToEulerAnglesYXZ()
+            floatYaw = yaw
+            
+            local currentPosX = startPos.X
+            local currentPosZ = startPos.Z
+            
+            local initialRay = workspace:Raycast(startPos + Vector3.new(0, 5, 0), Vector3.new(0, -30, 0), rayParams)
+            local groundY = initialRay and initialRay.Position.Y or (startPos.Y - 3)
+            local floatOffset = 10.0 -- 【変更】浮く高さを高くしました (元は6.0)
+            floatAirY = groundY + floatOffset
+            
+            task.spawn(function()
+                for i = 1, 15 do
+                    if not floatActive or not rootPart or not rootPart.Parent then break end
+                    for _, part in ipairs(character:GetDescendants()) do
+                        if part:IsA("BasePart") then
+                            part.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+                            part.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+                        end
+                    end
+                    local alpha = i / 15
+                    floatAirY = groundY + (floatOffset * alpha)
+                    local angle = math.rad(-6 * i)
+                    rootPart.CFrame = CFrame.new(currentPosX, floatAirY, currentPosZ) * CFrame.Angles(0, floatYaw, 0) * CFrame.Angles(angle, 0, 0)
+                    task.wait(0.02)
+                end
+                if floatActive and rootPart then
+                    floatAirY = groundY + floatOffset
+                end
+            end)
+            
+            local speedMultiplier = 1.3
+            
+            floatRenderConnection = RunService.RenderStepped:Connect(function(dt)
+                if not character or not rootPart or not humanoid or not rootPart.Parent then return end
+                humanoid.PlatformStand = true
+                
+                if cam.CameraSubject ~= rootPart then
+                    cam.CameraSubject = rootPart
+                end
+                
+                for _, part in ipairs(character:GetDescendants()) do
+                    if part:IsA("BasePart") then
+                        part.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+                        part.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+                    end
+                end
+                
+                local moveDir = humanoid.MoveDirection
+                local targetYaw = floatYaw
+                local currentSpeed = humanoid.WalkSpeed * speedMultiplier
+                
+                if moveDir.Magnitude > 0 then
+                    targetYaw = math.atan2(-moveDir.X, -moveDir.Z)
+                    local moveDelta = moveDir * currentSpeed * dt
+                    
+                    local origin = Vector3.new(currentPosX, floatAirY, currentPosZ)
+                    local checkDist = math.max(moveDelta.Magnitude * 1.5, 2)
+                    local wallRay = workspace:Raycast(origin, moveDir * checkDist, rayParams)
+                    
+                    if wallRay then
+                        local normal = wallRay.Normal
+                        local dot = moveDelta:Dot(normal)
+                        local slideDelta = moveDelta - normal * dot
+                        currentPosX = currentPosX + slideDelta.X
+                        currentPosZ = currentPosZ + slideDelta.Z
+                    else
+                        currentPosX = currentPosX + moveDelta.X
+                        currentPosZ = currentPosZ + moveDelta.Z
+                    end
+                else
+                    local camLook = cam.CFrame.LookVector
+                    targetYaw = math.atan2(-camLook.X, -camLook.Z)
+                end
+                
+                local diff = targetYaw - floatYaw
+                while diff > math.pi do diff = diff - math.pi * 2 end
+                while diff < -math.pi do diff = diff + math.pi * 2 end
+                floatYaw = floatYaw + diff * math.clamp(dt * 12, 0, 1)
+                
+                local lookAhead = moveDir.Magnitude > 0 and (moveDir.Unit * 3) or Vector3.new(0, 0, 0)
+                local rayOrigin = Vector3.new(currentPosX, floatAirY + 5, currentPosZ) + lookAhead
+                local rayResult = workspace:Raycast(rayOrigin, Vector3.new(0, -30, 0), rayParams)
+                
+                local targetGroundY = floatAirY - floatOffset
+                if rayResult then
+                    targetGroundY = rayResult.Position.Y
+                end
+                
+                local targetAirY = targetGroundY + floatOffset
+                floatAirY = floatAirY + (targetAirY - floatAirY) * math.clamp(dt * 10, 0, 1)
+                
+                rootPart.CFrame = CFrame.new(currentPosX, floatAirY, currentPosZ) * CFrame.Angles(0, floatYaw, 0) * CFrame.Angles(math.rad(-90), 0, 0)
+            end)
+        end
+        
+    else
+        if floatRenderConnection then
+            floatRenderConnection:Disconnect()
+            floatRenderConnection = nil
+        end
+        if floatHealthConnection then
+            floatHealthConnection:Disconnect()
+            floatHealthConnection = nil
+        end
+        
+        if humanoid and character then
+            cam.CameraSubject = humanoid
+        end
+        
+        if humanoid then
+            pcall(function()
+                humanoid:SetStateEnabled(Enum.HumanoidStateType.Dead, true)
+                humanoid:SetStateEnabled(Enum.HumanoidStateType.GettingUp, true)
+            end)
+            humanoid.MaxHealth = 100
+            humanoid.Health = 100
+            humanoid.PlatformStand = false
+        end
+    end
+end)
