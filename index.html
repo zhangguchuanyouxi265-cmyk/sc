@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Script Loader</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome for icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex items-center justify-center p-4">
+
+    <!-- 中央のカードコンテナ -->
+    <div class="bg-slate-900 border border-slate-800 p-8 rounded-2xl shadow-2xl max-w-xl w-full text-center relative overflow-hidden">
+        <!-- 背景の装飾的なグラデーション効果 -->
+        <div class="absolute -top-24 -right-24 w-48 h-48 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none"></div>
+        <div class="absolute -bottom-24 -left-24 w-48 h-48 bg-purple-500/10 rounded-full blur-3xl pointer-events-none"></div>
+
+        <!-- タイトル -->
+        <h1 class="text-2xl font-bold mb-6 tracking-wide text-white flex items-center justify-center gap-2">
+            <i class="fa-solid fa-code text-indigo-400"></i> Script Loader
+        </h1>
+
+        <!-- スクリプトを表示する枠 -->
+        <div class="bg-slate-950 border border-slate-800 p-4 rounded-xl mb-6 text-left relative group">
+            <code id="scriptText" class="text-indigo-300 font-mono text-sm break-all select-all block">loadstring(game:HttpGet("https://pastebin.com/raw/37Hmk17a")) ()</code>
+        </div>
+
+        <!-- コピーボタン -->
+        <button id="copyBtn" onclick="copyCode()" class="w-full py-3 px-6 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-semibold rounded-xl shadow-lg transition-all duration-200 flex items-center justify-center gap-2 cursor-pointer active:scale-95">
+            <i class="fa-regular fa-copy" id="copyIcon"></i>
+            <span id="copyText">コードをコピーする</span>
+        </button>
+    </div>
+
+    <!-- コピー完了時のトースト通知 -->
+    <div id="toast" class="fixed bottom-5 right-5 bg-emerald-600 text-white px-4 py-2 rounded-lg shadow-lg transform translate-y-20 opacity-0 transition-all duration-300 flex items-center gap-2 text-sm">
+        <i class="fa-solid fa-check"></i> クリップボードにコピーしました！
+    </div>
+
+    <script>
+        function copyCode() {
+            const codeText = 'loadstring(game:HttpGet("https://pastebin.com/raw/37Hmk17a")) ()';
+            
+            navigator.clipboard.writeText(codeText).then(() => {
+                const btn = document.getElementById('copyBtn');
+                const icon = document.getElementById('copyIcon');
+                const text = document.getElementById('copyText');
+                const toast = document.getElementById('toast');
+
+                // ボタンの見た目を変更（緑色に）
+                btn.classList.remove('from-indigo-600', 'to-purple-600', 'hover:from-indigo-500', 'hover:to-purple-500');
+                btn.classList.add('bg-emerald-600');
+                icon.className = 'fa-solid fa-check';
+                text.textContent = 'コピー完了！';
+
+                // トースト通知を表示
+                toast.classList.remove('translate-y-20', 'opacity-0');
+                toast.classList.add('translate-y-0', 'opacity-100');
+
+                // 2秒後に元に戻す
+                setTimeout(() => {
+                    btn.classList.remove('bg-emerald-600');
+                    btn.classList.add('from-indigo-600', 'to-purple-600', 'hover:from-indigo-500', 'hover:to-purple-500');
+                    icon.className = 'fa-regular fa-copy';
+                    text.textContent = 'コードをコピーする';
+
+                    toast.classList.remove('translate-y-0', 'opacity-100');
+                    toast.classList.add('translate-y-20', 'opacity-0');
+                }, 2000);
+            });
+        }
+    </script>
+</body>
+</html>
