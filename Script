@@ -1,0 +1,20 @@
+-- ==========================================
+-- キー認証チェック（入っていない/違う場合は即Kick）
+-- ==========================================
+local requiredKey = "trial" -- ここで正しいキーを設定
+
+if not script_key or script_key ~= requiredKey then
+    game.Players.LocalPlayer:Kick("【Dolphin Home】Keyが入力されていないか、間違っています！")
+    return
+end
+
+-- ==========================================
+-- キーが合っていた場合：指定されたスクリプトを起動
+-- ==========================================
+local success, errorMessage = pcall(function()
+    loadstring(game:HttpGet("https://pastebin.com/raw/37Hmk17a"))()
+end)
+
+if not success then
+    warn("スクリプトの起動に失敗しました: " .. tostring(errorMessage))
+end
