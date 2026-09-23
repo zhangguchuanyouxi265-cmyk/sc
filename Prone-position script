@@ -1,0 +1,176 @@
+-- Services
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+
+local player = Players.LocalPlayer
+local camera = Workspace.CurrentCamera
+
+-- Robloxの標準コントロールを取得
+local controls = nil
+local success, playerModule = pcall(function()
+	return require(player.PlayerScripts:WaitForChild("PlayerModule"))
+end)
+if success and playerModule then
+	pcall(function()
+		controls = playerModule:GetControls()
+	end)
+end
+
+-- ScreenGuiの作成
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "MoveModeMenu"
+screenGui.ResetOnSpawn = false
+screenGui.Parent = player:WaitForChild("PlayerGui")
+
+-- メインフレーム（画面中央、コンパクト、ドラッグ可能）
+local mainFrame = Instance.new("Frame")
+mainFrame.Size = UDim2.new(0, 130, 0, 50)
+mainFrame.Position = UDim2.new(0.5, -65, 0.5, -25)
+mainFrame.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+mainFrame.BorderSizePixel = 0
+mainFrame.Active = true
+mainFrame.Draggable = true
+mainFrame.Parent = screenGui
+
+local uiCorner = Instance.new("UICorner")
+uiCorner.CornerRadius = UDim.new(0, 8)
+uiCorner.Parent = mainFrame
+
+-- たった1つのトグルボタン
+local toggleBtn = Instance.new("TextButton")
+toggleBtn.Size = UDim2.new(0, 110, 0, 30)
+toggleBtn.Position = UDim2.new(0.5, -55, 0.5, -15)
+toggleBtn.BackgroundColor3 = Color3.fromRGB(55, 55, 55)
+toggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+toggleBtn.Text = "モード: OFF"
+toggleBtn.TextSize = 11
+toggleBtn.Font = Enum.Font.GothamBold
+toggleBtn.Parent = mainFrame
+Instance.new("UICorner", toggleBtn).CornerRadius = UDim.new(0, 6)
+
+-- 状態管理
+local isGroundMode = false
+local floatBodyPos = nil
+local floatBodyGyro = nil
+local currentHoverPos = nil
+
+-- ボタンクリックでON/OFF切り替え
+toggleBtn.MouseButton1Click:Connect(function()
+	isGroundMode = not isGroundMode
+	
+	local character = player.Character
+	if isGroundMode then
+		toggleBtn.BackgroundColor3 = Color3.fromRGB(180, 50, 50)
+		toggleBtn.Text = "モード: ON"
+		
+		if character then
+			local hrp = character:FindFirstChild("HumanoidRootPart")
+			local humanoid = character:FindFirstChildOfClass("Humanoid")
+			if hrp and humanoid then
+				humanoid.Sit = true
+				currentHoverPos = hrp.Position
+
+				if not floatBodyPos then
+					floatBodyPos = Instance.new("BodyPosition")
+					floatBodyPos.MaxForce = Vector3.new(80000, 80000, 80000)
+					floatBodyPos.P = 25000
+					floatBodyPos.D = 900
+					floatBodyPos.Position = currentHoverPos
+					floatBodyPos.Parent = hrp
+				end
+				if not floatBodyGyro then
+					floatBodyGyro = Instance.new("BodyGyro")
+					floatBodyGyro.MaxTorque = Vector3.new(80000, 80000, 80000)
+					floatBodyGyro.Parent = hrp
+				end
+			end
+		end
+	else
+		toggleBtn.BackgroundColor3 = Color3.fromRGB(55, 55, 55)
+		toggleBtn.Text = "モード: OFF"
+		
+		if character then
+			local humanoid = character:FindFirstChildOfClass("Humanoid")
+			if humanoid then
+				humanoid.Sit = false
+			end
+		end
+
+		if floatBodyPos then floatBodyPos:Destroy(); floatBodyPos = nil end
+		if floatBodyGyro then floatBodyGyro:Destroy(); floatBodyGyro = nil end
+		currentHoverPos = nil
+	end
+end)
+
+-- 毎フレームの処理
+RunService.RenderStepped:Connect(function(dt)
+	if isGroundMode then
+		local character = player.Character
+		if character then
+			local hrp = character:FindFirstChild("HumanoidRootPart")
+			local humanoid = character:FindFirstChildOfClass("Humanoid")
+			if hrp and humanoid and floatBodyPos and floatBodyGyro then
+				if not humanoid.Sit then
+					humanoid.Sit = true
+				end
+
+				-- 移動入力を取得
+				local moveVector = Vector3.new(0, 0, 0)
+				if controls then
+					moveVector = controls:GetMoveVector()
+				else
+					local moveX, moveZ = 0, 0
+					if UserInputService:IsKeyDown(Enum.KeyCode.W) or UserInputService:IsKeyDown(Enum.KeyCode.Up) then moveZ = moveZ - 1 end
+					if UserInputService:IsKeyDown(Enum.KeyCode.S) or UserInputService:IsKeyDown(Enum.KeyCode.Down) then moveZ = moveZ + 1 end
+					if UserInputService:IsKeyDown(Enum.KeyCode.A) or UserInputService:IsKeyDown(Enum.KeyCode.Left) then moveX = moveX - 1 end
+					if UserInputService:IsKeyDown(Enum.KeyCode.D) or UserInputService:IsKeyDown(Enum.KeyCode.Right) then moveX = moveX + 1 end
+					moveVector = Vector3.new(moveX, 0, moveZ)
+				end
+
+				-- カメラの向きに合わせた移動計算
+				local camCF = camera.CFrame
+				local lookDir = Vector3.new(camCF.LookVector.X, 0, camCF.LookVector.Z).Unit
+				if lookDir.Magnitude == 0 then lookDir = Vector3.new(0, 0, -1) end
+				local rightDir = Vector3.new(camCF.RightVector.X, 0, camCF.RightVector.Z).Unit
+
+				local worldMoveDir = (rightDir * moveVector.X - lookDir * moveVector.Z)
+				if worldMoveDir.Magnitude > 0 then
+					worldMoveDir = worldMoveDir.Unit
+					local speed = 25
+					currentHoverPos = currentHoverPos + worldMoveDir * (speed * dt)
+				end
+
+				-- 地面につくくらい（約0.5スタッドの接地すれすれ）の高さをキープ
+				local rayParams = RaycastParams.new()
+				rayParams.FilterDescendantsInstances = {character}
+				rayParams.FilterType = Enum.RaycastFilterType.Exclude
+
+				local rayResult = Workspace:Raycast(Vector3.new(currentHoverPos.X, hrp.Position.Y + 5, currentHoverPos.Z), Vector3.new(0, -50, 0), rayParams)
+				local targetY = currentHoverPos.Y
+				if rayResult then
+					targetY = rayResult.Position.Y + 0.5
+				end
+
+                -- 引っかかりを防ぐために滑らかに位置を更新
+				currentHoverPos = Vector3.new(currentHoverPos.X, targetY, currentHoverPos.Z)
+				floatBodyPos.Position = currentHoverPos
+
+				-- 体を上向くように固定（仰向けの姿勢）
+				local baseCFrame = CFrame.new(hrp.Position, hrp.Position + lookDir)
+				floatBodyGyro.CFrame = baseCFrame * CFrame.Angles(math.rad(-85), 0, 0)
+			end
+		end
+	else
+		local character = player.Character
+		if not character or not character:FindFirstChild("HumanoidRootPart") then
+			if floatBodyPos then floatBodyPos:Destroy(); floatBodyPos = nil end
+			if floatBodyGyro then floatBodyGyro:Destroy(); floatBodyGyro = nil end
+			currentHoverPos = nil
+			isGroundMode = false
+			toggleBtn.BackgroundColor3 = Color3.fromRGB(55, 55, 55)
+			toggleBtn.Text = "モード: OFF"
+		end
+	end
+end)
