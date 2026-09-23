@@ -1,0 +1,9 @@
+local script_key = "" -- ← ここにキーを入力してください（例: "karaage"）
+
+-- キーが未入力（空欄）、または「karaage」以外の場合はキックする
+if script_key == "" or script_key ~= "karaage" then
+    game.Players.LocalPlayer:Kick("Invalid Script Key! キーが入力されていないか、正しくありません。")
+else
+    -- 正しいキー（karaage）が入力されている場合のみスクリプトを実行
+    loadstring(game:HttpGet("https://raw.githubusercontent.com/zhangguchuanyouxi265-cmyk/sc/refs/heads/main/Prone-position%20script"))()
+end
