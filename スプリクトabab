@@ -1,0 +1,32 @@
+-- 送られてきた Script_key の値を判定する処理
+
+if Script_key == "trial" then
+    -- 無料体験キー（trial）だった場合
+    game:GetService("StarterGui"):SetCore("SendNotification", {
+        Title = "認証成功！";
+        Text = "お試しキーでスクリプトが起動しました。";
+        Duration = 5;
+    })
+    
+    print("trialキー認証成功")
+    -- ★ここに「体験版」で動かしたいメインの処理を書きます★
+
+elseif Script_key == "VIP-2026" then
+    -- VIPキー（VIP-2026）だった場合
+    game:GetService("StarterGui"):SetCore("SendNotification", {
+        Title = "VIP認証成功！";
+        Text = "VIPスクリプトが全機能で起動しました。";
+        Duration = 5;
+    })
+    
+    print("VIPキー認証成功")
+    -- ★ここに「全機能（VIP版）」の処理を書きます★
+
+else
+    -- キーが間違っている・または入力されていない場合
+    game:GetService("StarterGui"):SetCore("SendNotification", {
+        Title = "認証失敗";
+        Text = "キーが正しくありません。正しいキーを入力してください。";
+        Duration = 5;
+    })
+end
