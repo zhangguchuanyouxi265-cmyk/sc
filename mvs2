@@ -1,0 +1,921 @@
+-- ============================================================
+--   Assassin vs Sheriff 2 - Delta EXCLUSIVE
+--   ------------------------------------------------
+--   ・Delta エグゼキューター専用（他executor非対応）
+--   ・壁貫通しない（3点レイキャスト）
+--   ・腹（Torso）に硬く吸い付き
+--   ・見えなくなるまで追尾
+--   ・Delta API のみ使用
+-- ============================================================
+
+-- ============================================================
+-- ① Delta起動ガード
+-- ============================================================
+if not Delta then
+    error("[AvS2-Delta] このスクリプトはDelta専用です。Deltaから実行してください。")
+end
+
+local Players           = game:GetService("Players")
+local RunService        = game:GetService("RunService")
+local UserInputService  = game:GetService("UserInputService")
+local HttpService       = game:GetService("HttpService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local LocalPlayer = Players.LocalPlayer
+local Camera      = workspace.CurrentCamera
+
+-- ============================================================
+-- ② Delta API ラッパ
+-- ============================================================
+local DeltaAPI = {}
+
+-- GUI親（Deltaは gethui が必ず通る）
+function DeltaAPI.getGuiParent()
+    local ok, hui = pcall(gethui)
+    if ok and hui then return hui end
+    -- 万一の保険（Deltaでは基本通らない）
+    return LocalPlayer:WaitForChild("PlayerGui")
+end
+
+-- GUI保護
+function DeltaAPI.protectGui(gui)
+    if Delta.protect_gui then
+        pcall(function() Delta.protect_gui(gui) end)
+    elseif protect_gui then
+        pcall(function() protect_gui(gui) end)
+    end
+end
+
+-- 通知（Deltaのトースト）
+function DeltaAPI.notify(title, text, dur)
+    dur = dur or 3
+    if Delta.notify then
+        pcall(function() Delta.notify(title, text, dur) end)
+    elseif Delta.Toast then
+        pcall(function() Delta.Toast(title .. ": " .. text, dur) end)
+    end
+end
+
+-- タッチ送信（Delta優先）
+function DeltaAPI.tap(x, y)
+    -- Delta.tap があれば最優先
+    if Delta.tap then
+        local ok = pcall(function() Delta.tap(x, y) end)
+        if ok then return true end
+    end
+    -- VirtualInputManager
+    local VIM = game:GetService("VirtualInputManager")
+    if VIM then
+        pcall(function()
+            VIM:SendTouchEvent(x, y, Enum.UserInputState.Begin, Enum.UserInputType.Touch)
+        end)
+        pcall(function()
+            VIM:SendTouchEvent(x, y, Enum.UserInputState.End, Enum.UserInputType.Touch)
+        end)
+        return true
+    end
+    -- Deltaのマウスクリック
+    if Delta.mouse1click then
+        pcall(function() Delta.mouse1click() end)
+        return true
+    end
+    return false
+end
+
+-- ファイル（DeltaのWorkspace固定）
+DeltaAPI.WorkDir = "Delta/Workspace/"
+DeltaAPI.ConfigFile = DeltaAPI.WorkDir .. "AvS2_Delta_Config.json"
+
+function DeltaAPI.save(str)
+    if writefile then
+        pcall(function() writefile(DeltaAPI.ConfigFile, str) end)
+    end
+end
+function DeltaAPI.load()
+    if isfile and isfile(DeltaAPI.ConfigFile) then
+        local ok, s = pcall(readfile, DeltaAPI.ConfigFile)
+        if ok then return s end
+    end
+    return nil
+end
+function DeltaAPI.exists()
+    return isfile and isfile(DeltaAPI.ConfigFile)
+end
+
+-- ============================================================
+-- ③ 既存GUI削除
+-- ============================================================
+local GuiParent = DeltaAPI.getGuiParent()
+pcall(function()
+    for _, g in ipairs(GuiParent:GetChildren()) do
+        if g.Name == "AvS2_DeltaGUI" then g:Destroy() end
+    end
+end)
+
+-- ============================================================
+-- ④ 設定
+-- ============================================================
+local DEFAULT_CONFIG = {
+    triggerbot     = false,
+    noTeamKill     = false,
+    autoThrow      = true,
+    aimAssist      = true,
+    tapHit         = true,
+    circleRadius   = 140,
+    hitDelay       = 0.06,
+    autoFireDelay  = 0.08,
+    posX           = 20,
+    posY           = 60,
+    frameX         = 0.5,
+    frameY         = 0.5,
+    opacity        = 0.35,
+    showCircle     = true,
+    autoFireCircle = true,
+    lowLagMode     = true,
+    cameraLock     = true,
+    lockStrength   = 0.95,
+    trackUntilLost = true,
+    wallCheck      = true,
+}
+
+local function deepCopy(t) local o={} for k,v in pairs(t) do o[k]=v end return o end
+local function saveConfig(d)
+    if not DeltaAPI.save then return end
+    DeltaAPI.save(HttpService:JSONEncode(d))
+end
+local function loadConfig()
+    if not DeltaAPI.exists() then return deepCopy(DEFAULT_CONFIG) end
+    local s = DeltaAPI.load()
+    if not s then return deepCopy(DEFAULT_CONFIG) end
+    local ok, d = pcall(HttpService.JSONDecode, HttpService, s)
+    if ok and type(d)=="table" then
+        local m = deepCopy(DEFAULT_CONFIG)
+        for k,v in pairs(d) do m[k]=v end
+        return m
+    end
+    return deepCopy(DEFAULT_CONFIG)
+end
+local Config = loadConfig()
+
+-- ============================================================
+-- ⑤ 状態
+-- ============================================================
+local State = {
+    TriggerbotOn   = Config.triggerbot,
+    NoTeamKill     = Config.noTeamKill,
+    AutoThrow      = Config.autoThrow,
+    AimAssist      = Config.aimAssist,
+    TapHit         = Config.tapHit,
+    CircleRadius   = Config.circleRadius,
+    HitDelay       = Config.hitDelay,
+    AutoFireDelay  = Config.autoFireDelay,
+    ShowCircle     = Config.showCircle,
+    AutoFireCircle = Config.autoFireCircle,
+    LowLagMode     = Config.lowLagMode,
+    CameraLock     = Config.cameraLock,
+    LockStrength   = Config.lockStrength,
+    TrackUntilLost = Config.trackUntilLost,
+    WallCheck      = Config.wallCheck,
+    Opacity        = Config.opacity,
+
+    LastHitTime    = 0,
+    LastFireTime   = 0,
+    HitCount       = 0,
+    TapCount       = 0,
+    HitRemotes     = {},
+    CachedTarget   = nil,
+    CacheTime      = 0,
+    TouchPos       = Vector2.new(0,0),
+    TouchActive    = false,
+    LockedTarget   = nil,
+    LockedHRP      = nil,
+    LockedChar     = nil,
+    TrackedPlayer  = nil,
+}
+
+-- ============================================================
+-- ⑥ 敵マーカー削除
+-- ============================================================
+local function removeEnemyMarkers()
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr == LocalPlayer then continue end
+        local char = plr.Character
+        if not char then continue end
+        for _, obj in ipairs(char:GetDescendants()) do
+            if obj:IsA("Highlight") or obj:IsA("BillboardGui")
+            or obj:IsA("SelectionBox") or obj:IsA("BoxHandleAdornment")
+            or obj:IsA("SphereHandleAdornment") or obj:IsA("LineHandleAdornment") then
+                pcall(function() obj:Destroy() end)
+            end
+        end
+    end
+end
+task.spawn(function()
+    while true do
+        task.wait(State.LowLagMode and 1.5 or 0.8)
+        pcall(removeEnemyMarkers)
+    end
+end)
+
+-- ============================================================
+-- ⑦ GUI構築（Delta専用）
+-- ============================================================
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "AvS2_DeltaGUI"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.IgnoreGuiInset = true
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+ScreenGui.DisplayOrder = 999
+ScreenGui.Parent = GuiParent
+DeltaAPI.protectGui(ScreenGui)
+
+-- トグルボタン
+local ToggleBtn = Instance.new("TextButton")
+ToggleBtn.Size = UDim2.new(0, 56, 0, 56)
+ToggleBtn.Position = UDim2.new(0, Config.posX, 0, Config.posY)
+ToggleBtn.BackgroundColor3 = Color3.fromRGB(35, 35, 42)
+ToggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+ToggleBtn.Text = "Δ"
+ToggleBtn.TextSize = 30
+ToggleBtn.Font = Enum.Font.GothamBold
+ToggleBtn.BorderSizePixel = 0
+ToggleBtn.AutoButtonColor = false
+ToggleBtn.Active = true
+ToggleBtn.Draggable = true
+ToggleBtn.Parent = ScreenGui
+Instance.new("UICorner", ToggleBtn).CornerRadius = UDim.new(1, 0)
+local tStroke = Instance.new("UIStroke")
+tStroke.Color = Color3.fromRGB(0, 200, 255)
+tStroke.Thickness = 2
+tStroke.Parent = ToggleBtn
+
+-- 中央円
+local CircleFrame = Instance.new("Frame")
+CircleFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+CircleFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
+CircleFrame.Size = UDim2.new(0, State.CircleRadius * 2, 0, State.CircleRadius * 2)
+CircleFrame.BackgroundTransparency = 1
+CircleFrame.BorderSizePixel = 0
+CircleFrame.Visible = State.ShowCircle
+CircleFrame.ZIndex = 5
+CircleFrame.Parent = ScreenGui
+Instance.new("UICorner", CircleFrame).CornerRadius = UDim.new(1, 0)
+local cStroke = Instance.new("UIStroke")
+cStroke.Color = Color3.fromRGB(0, 255, 130)
+cStroke.Thickness = 2
+cStroke.Transparency = 0.25
+cStroke.Parent = CircleFrame
+
+local centerDot = Instance.new("Frame")
+centerDot.AnchorPoint = Vector2.new(0.5, 0.5)
+centerDot.Position = UDim2.new(0.5, 0, 0.5, 0)
+centerDot.Size = UDim2.new(0, 6, 0, 6)
+centerDot.BackgroundColor3 = Color3.fromRGB(0, 255, 130)
+centerDot.BackgroundTransparency = 0.3
+centerDot.BorderSizePixel = 0
+centerDot.Parent = CircleFrame
+Instance.new("UICorner", centerDot).CornerRadius = UDim.new(1, 0)
+
+-- メインフレーム
+local MainFrame = Instance.new("Frame")
+MainFrame.Size = UDim2.new(0, 300, 0, 660)
+MainFrame.Position = UDim2.new(Config.frameX, -150, Config.frameY, -330)
+MainFrame.BackgroundColor3 = Color3.fromRGB(15, 20, 28)
+MainFrame.BackgroundTransparency = State.Opacity
+MainFrame.BorderSizePixel = 0
+MainFrame.Visible = false
+MainFrame.Active = true
+MainFrame.Draggable = true
+MainFrame.Parent = ScreenGui
+Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 16)
+local mStroke = Instance.new("UIStroke")
+mStroke.Color = Color3.fromRGB(0, 200, 255)
+mStroke.Thickness = 1.8
+mStroke.Transparency = 0.3
+mStroke.Parent = MainFrame
+
+local Title = Instance.new("TextLabel")
+Title.Size = UDim2.new(1, 0, 0, 38)
+Title.BackgroundTransparency = 1
+Title.Text = "Δ AvS2 Delta Edition Δ"
+Title.TextColor3 = Color3.fromRGB(0, 220, 255)
+Title.TextSize = 17
+Title.Font = Enum.Font.GothamBold
+Title.Parent = MainFrame
+
+local function makeToggle(yPos, text, initial)
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(0.9, 0, 0, 38)
+    btn.Position = UDim2.new(0.05, 0, 0, yPos)
+    btn.BackgroundColor3 = initial and Color3.fromRGB(40,130,65) or Color3.fromRGB(45,45,58)
+    btn.TextColor3 = Color3.fromRGB(255,255,255)
+    btn.Text = text .. ": " .. (initial and "ON" or "OFF")
+    btn.TextSize = 13
+    btn.Font = Enum.Font.GothamMedium
+    btn.BorderSizePixel = 0
+    btn.AutoButtonColor = false
+    btn.Parent = MainFrame
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 9)
+    local s = Instance.new("UIStroke")
+    s.Color = Color3.fromRGB(0, 150, 200)
+    s.Thickness = 1
+    s.Transparency = 0.5
+    s.Parent = btn
+    return btn
+end
+
+local TriggerBtn   = makeToggle(44,  "🔫 トリガーボット", State.TriggerbotOn)
+local TeamBtn      = makeToggle(86,  "🛡 味方に当たらない", State.NoTeamKill)
+local AutoBtn      = makeToggle(128, "🎯 自動投擲", State.AutoThrow)
+local AimBtn       = makeToggle(170, "👁 弾道アシスト", State.AimAssist)
+local TapBtn       = makeToggle(212, "👆 どこタップでもヒット", State.TapHit)
+local CircleBtn    = makeToggle(254, "⭕ 中央円表示", State.ShowCircle)
+local AutoFireBtn  = makeToggle(296, "🔥 円内自動射撃", State.AutoFireCircle)
+local LowLagBtn    = makeToggle(338, "⚡ 軽量化モード", State.LowLagMode)
+local CamLockBtn   = makeToggle(380, "🎥 視点吸い付き", State.CameraLock)
+local TrackBtn     = makeToggle(422, "👣 見えなくなるまで追尾", State.TrackUntilLost)
+local WallBtn      = makeToggle(464, "🧱 壁貫通しない", State.WallCheck)
+
+-- サイズ調整
+local SizeMinus = Instance.new("TextButton")
+SizeMinus.Size = UDim2.new(0.28, 0, 0, 32)
+SizeMinus.Position = UDim2.new(0.05, 0, 0, 506)
+SizeMinus.BackgroundColor3 = Color3.fromRGB(60, 50, 90)
+SizeMinus.TextColor3 = Color3.fromRGB(255,255,255)
+SizeMinus.Text = "− 円"
+SizeMinus.TextSize = 13
+SizeMinus.Font = Enum.Font.GothamBold
+SizeMinus.BorderSizePixel = 0
+SizeMinus.AutoButtonColor = false
+SizeMinus.Parent = MainFrame
+Instance.new("UICorner", SizeMinus).CornerRadius = UDim.new(0, 8)
+
+local SizePlus = Instance.new("TextButton")
+SizePlus.Size = UDim2.new(0.28, 0, 0, 32)
+SizePlus.Position = UDim2.new(0.36, 0, 0, 506)
+SizePlus.BackgroundColor3 = Color3.fromRGB(60, 50, 90)
+SizePlus.TextColor3 = Color3.fromRGB(255,255,255)
+SizePlus.Text = "円 +"
+SizePlus.TextSize = 13
+SizePlus.Font = Enum.Font.GothamBold
+SizePlus.BorderSizePixel = 0
+SizePlus.AutoButtonColor = false
+SizePlus.Parent = MainFrame
+Instance.new("UICorner", SizePlus).CornerRadius = UDim.new(0, 8)
+
+local SpeedMinus = Instance.new("TextButton")
+SpeedMinus.Size = UDim2.new(0.28, 0, 0, 32)
+SpeedMinus.Position = UDim2.new(0.67, 0, 0, 506)
+SpeedMinus.BackgroundColor3 = Color3.fromRGB(90, 50, 60)
+SpeedMinus.TextColor3 = Color3.fromRGB(255,255,255)
+SpeedMinus.Text = "− 速度"
+SpeedMinus.TextSize = 13
+SpeedMinus.Font = Enum.Font.GothamBold
+SpeedMinus.BorderSizePixel = 0
+SpeedMinus.AutoButtonColor = false
+SpeedMinus.Parent = MainFrame
+Instance.new("UICorner", SpeedMinus).CornerRadius = UDim.new(0, 8)
+
+local SpeedPlus = Instance.new("TextButton")
+SpeedPlus.Size = UDim2.new(0.28, 0, 0, 32)
+SpeedPlus.Position = UDim2.new(0.67, 0, 0, 542)
+SpeedPlus.BackgroundColor3 = Color3.fromRGB(90, 50, 60)
+SpeedPlus.TextColor3 = Color3.fromRGB(255,255,255)
+SpeedPlus.Text = "速度 +"
+SpeedPlus.TextSize = 13
+SpeedPlus.Font = Enum.Font.GothamBold
+SpeedPlus.BorderSizePixel = 0
+SpeedPlus.AutoButtonColor = false
+SpeedPlus.Parent = MainFrame
+Instance.new("UICorner", SpeedPlus).CornerRadius = UDim.new(0, 8)
+
+local SizeLabel = Instance.new("TextLabel")
+SizeLabel.Size = UDim2.new(0.34, 0, 0, 32)
+SizeLabel.Position = UDim2.new(0.36, 0, 0, 542)
+SizeLabel.BackgroundColor3 = Color3.fromRGB(25, 30, 40)
+SizeLabel.BackgroundTransparency = 0.3
+SizeLabel.TextColor3 = Color3.fromRGB(255,255,200)
+SizeLabel.Text = "R:" .. State.CircleRadius
+SizeLabel.TextSize = 12
+SizeLabel.Font = Enum.Font.GothamBold
+SizeLabel.BorderSizePixel = 0
+SizeLabel.Parent = MainFrame
+Instance.new("UICorner", SizeLabel).CornerRadius = UDim.new(0, 8)
+
+local StrMinus = Instance.new("TextButton")
+StrMinus.Size = UDim2.new(0.42, 0, 0, 32)
+StrMinus.Position = UDim2.new(0.05, 0, 0, 582)
+StrMinus.BackgroundColor3 = Color3.fromRGB(40, 70, 90)
+StrMinus.TextColor3 = Color3.fromRGB(255,255,255)
+StrMinus.Text = "− 硬さ"
+StrMinus.TextSize = 12
+StrMinus.Font = Enum.Font.GothamBold
+StrMinus.BorderSizePixel = 0
+StrMinus.AutoButtonColor = false
+StrMinus.Parent = MainFrame
+Instance.new("UICorner", StrMinus).CornerRadius = UDim.new(0, 8)
+
+local StrPlus = Instance.new("TextButton")
+StrPlus.Size = UDim2.new(0.42, 0, 0, 32)
+StrPlus.Position = UDim2.new(0.53, 0, 0, 582)
+StrPlus.BackgroundColor3 = Color3.fromRGB(40, 70, 90)
+StrPlus.TextColor3 = Color3.fromRGB(255,255,255)
+StrPlus.Text = "硬さ +"
+StrPlus.TextSize = 12
+StrPlus.Font = Enum.Font.GothamBold
+StrPlus.BorderSizePixel = 0
+StrPlus.AutoButtonColor = false
+StrPlus.Parent = MainFrame
+Instance.new("UICorner", StrPlus).CornerRadius = UDim.new(0, 8)
+
+local StatusLabel = Instance.new("TextLabel")
+StatusLabel.Size = UDim2.new(0.9, 0, 0, 30)
+StatusLabel.Position = UDim2.new(0.05, 0, 0, 620)
+StatusLabel.BackgroundColor3 = Color3.fromRGB(20, 25, 35)
+StatusLabel.BackgroundTransparency = 0.3
+StatusLabel.TextColor3 = Color3.fromRGB(0, 255, 130)
+StatusLabel.Text = "Δ 待機中..."
+StatusLabel.TextSize = 12
+StatusLabel.Font = Enum.Font.GothamMedium
+StatusLabel.BorderSizePixel = 0
+StatusLabel.Parent = MainFrame
+Instance.new("UICorner", StatusLabel).CornerRadius = UDim.new(0, 8)
+
+local SaveBtn = Instance.new("TextButton")
+SaveBtn.Size = UDim2.new(0.9, 0, 0, 36)
+SaveBtn.Position = UDim2.new(0.05, 0, 1, -44)
+SaveBtn.BackgroundColor3 = Color3.fromRGB(30, 95, 45)
+SaveBtn.TextColor3 = Color3.fromRGB(255,255,255)
+SaveBtn.Text = "💾 設定保存 (Delta)"
+SaveBtn.TextSize = 14
+SaveBtn.Font = Enum.Font.GothamBold
+SaveBtn.BorderSizePixel = 0
+SaveBtn.AutoButtonColor = false
+SaveBtn.Parent = MainFrame
+Instance.new("UICorner", SaveBtn).CornerRadius = UDim.new(0, 10)
+
+-- ============================================================
+-- ⑧ UI更新
+-- ============================================================
+local function updateUI()
+    TriggerBtn.Text = "🔫 トリガーボット: " .. (State.TriggerbotOn and "ON" or "OFF")
+    TriggerBtn.BackgroundColor3 = State.TriggerbotOn and Color3.fromRGB(40,130,65) or Color3.fromRGB(45,45,58)
+    TeamBtn.Text = "🛡 味方に当たらない: " .. (State.NoTeamKill and "ON" or "OFF")
+    TeamBtn.BackgroundColor3 = State.NoTeamKill and Color3.fromRGB(40,130,65) or Color3.fromRGB(45,45,58)
+    AutoBtn.Text = "🎯 自動投擲: " .. (State.AutoThrow and "ON" or "OFF")
+    AutoBtn.BackgroundColor3 = State.AutoThrow and Color3.fromRGB(40,130,65) or Color3.fromRGB(45,45,58)
+    AimBtn.Text = "👁 弾道アシスト: " .. (State.AimAssist and "ON" or "OFF")
+    AimBtn.BackgroundColor3 = State.AimAssist and Color3.fromRGB(40,130,65) or Color3.fromRGB(45,45,58)
+    TapBtn.Text = "👆 どこタップでもヒット: " .. (State.TapHit and "ON" or "OFF")
+    TapBtn.BackgroundColor3 = State.TapHit and Color3.fromRGB(40,130,65) or Color3.fromRGB(45,45,58)
+    CircleBtn.Text = "⭕ 中央円表示: " .. (State.ShowCircle and "ON" or "OFF")
+    CircleBtn.BackgroundColor3 = State.ShowCircle and Color3.fromRGB(40,130,65) or Color3.fromRGB(45,45,58)
+    AutoFireBtn.Text = "🔥 円内自動射撃: " .. (State.AutoFireCircle and "ON" or "OFF")
+    AutoFireBtn.BackgroundColor3 = State.AutoFireCircle and Color3.fromRGB(200,80,50) or Color3.fromRGB(45,45,58)
+    LowLagBtn.Text = "⚡ 軽量化モード: " .. (State.LowLagMode and "ON" or "OFF")
+    LowLagBtn.BackgroundColor3 = State.LowLagMode and Color3.fromRGB(40,130,65) or Color3.fromRGB(45,45,58)
+    CamLockBtn.Text = "🎥 視点吸い付き: " .. (State.CameraLock and "ON" or "OFF")
+    CamLockBtn.BackgroundColor3 = State.CameraLock and Color3.fromRGB(40,100,180) or Color3.fromRGB(45,45,58)
+    TrackBtn.Text = "👣 見えなくなるまで追尾: " .. (State.TrackUntilLost and "ON" or "OFF")
+    TrackBtn.BackgroundColor3 = State.TrackUntilLost and Color3.fromRGB(40,100,180) or Color3.fromRGB(45,45,58)
+    WallBtn.Text = "🧱 壁貫通しない: " .. (State.WallCheck and "ON" or "OFF")
+    WallBtn.BackgroundColor3 = State.WallCheck and Color3.fromRGB(40,100,180) or Color3.fromRGB(45,45,58)
+    CircleFrame.Visible = State.ShowCircle
+    CircleFrame.Size = UDim2.new(0, State.CircleRadius * 2, 0, State.CircleRadius * 2)
+    SizeLabel.Text = "R:" .. State.CircleRadius .. " S:" .. string.format("%.2f", State.LockStrength)
+end
+updateUI()
+
+ToggleBtn.MouseButton1Click:Connect(function() MainFrame.Visible = not MainFrame.Visible end)
+TriggerBtn.MouseButton1Click:Connect(function() State.TriggerbotOn = not State.TriggerbotOn; updateUI() end)
+TeamBtn.MouseButton1Click:Connect(function() State.NoTeamKill = not State.NoTeamKill; updateUI() end)
+AutoBtn.MouseButton1Click:Connect(function() State.AutoThrow = not State.AutoThrow; updateUI() end)
+AimBtn.MouseButton1Click:Connect(function() State.AimAssist = not State.AimAssist; updateUI() end)
+TapBtn.MouseButton1Click:Connect(function() State.TapHit = not State.TapHit; updateUI() end)
+CircleBtn.MouseButton1Click:Connect(function() State.ShowCircle = not State.ShowCircle; updateUI() end)
+AutoFireBtn.MouseButton1Click:Connect(function() State.AutoFireCircle = not State.AutoFireCircle; updateUI() end)
+LowLagBtn.MouseButton1Click:Connect(function() State.LowLagMode = not State.LowLagMode; updateUI() end)
+CamLockBtn.MouseButton1Click:Connect(function() State.CameraLock = not State.CameraLock; updateUI() end)
+TrackBtn.MouseButton1Click:Connect(function() State.TrackUntilLost = not State.TrackUntilLost; updateUI() end)
+WallBtn.MouseButton1Click:Connect(function() State.WallCheck = not State.WallCheck; updateUI() end)
+SizeMinus.MouseButton1Click:Connect(function() State.CircleRadius = math.max(40, State.CircleRadius - 10); updateUI() end)
+SizePlus.MouseButton1Click:Connect(function() State.CircleRadius = math.min(400, State.CircleRadius + 10); updateUI() end)
+SpeedMinus.MouseButton1Click:Connect(function() State.AutoFireDelay = math.min(0.3, State.AutoFireDelay + 0.02); updateUI() end)
+SpeedPlus.MouseButton1Click:Connect(function() State.AutoFireDelay = math.max(0.02, State.AutoFireDelay - 0.02); updateUI() end)
+StrMinus.MouseButton1Click:Connect(function() State.LockStrength = math.max(0.05, State.LockStrength - 0.05); updateUI() end)
+StrPlus.MouseButton1Click:Connect(function() State.LockStrength = math.min(1.0, State.LockStrength + 0.05); updateUI() end)
+
+SaveBtn.MouseButton1Click:Connect(function()
+    Config.triggerbot     = State.TriggerbotOn
+    Config.noTeamKill     = State.NoTeamKill
+    Config.autoThrow      = State.AutoThrow
+    Config.aimAssist      = State.AimAssist
+    Config.tapHit         = State.TapHit
+    Config.showCircle     = State.ShowCircle
+    Config.autoFireCircle = State.AutoFireCircle
+    Config.lowLagMode     = State.LowLagMode
+    Config.cameraLock     = State.CameraLock
+    Config.lockStrength   = State.LockStrength
+    Config.trackUntilLost = State.TrackUntilLost
+    Config.wallCheck      = State.WallCheck
+    Config.circleRadius   = State.CircleRadius
+    Config.autoFireDelay  = State.AutoFireDelay
+    Config.posX           = ToggleBtn.Position.X.Offset
+    Config.posY           = ToggleBtn.Position.Y.Offset
+    Config.frameX         = MainFrame.Position.X.Scale
+    Config.frameY         = MainFrame.Position.Y.Scale
+    saveConfig(Config)
+    SaveBtn.Text = "✅ 保存完了"
+    DeltaAPI.notify("AvS2-Delta", "設定を保存しました")
+    task.wait(1.2)
+    SaveBtn.Text = "💾 設定保存 (Delta)"
+end)
+
+-- ============================================================
+-- ⑨ 味方判定
+-- ============================================================
+local function isTeammate(plr)
+    if not plr or plr == LocalPlayer then return true end
+    local mt, tt = LocalPlayer.Team, plr.Team
+    if mt and tt and mt == tt then return true end
+    return false
+end
+local function getMyHRP()
+    local c = LocalPlayer.Character
+    return c and c:FindFirstChild("HumanoidRootPart")
+end
+local function getEquippedTool()
+    local c = LocalPlayer.Character
+    if not c then return nil end
+    return c:FindFirstChildOfClass("Tool")
+end
+
+-- ============================================================
+-- ⑩ 壁貫通チェック（3点レイ）
+-- ============================================================
+local function hasLineOfSight(targetChar, targetPos)
+    if not State.WallCheck then return true end
+    local myChar = LocalPlayer.Character
+    if not myChar then return false end
+    local myHRP = myChar:FindFirstChild("HumanoidRootPart")
+    if not myHRP then return false end
+    local origin = Camera.CFrame.Position
+    if (myHRP.Position - origin).Magnitude < 1.5 then
+        origin = myHRP.Position + Vector3.new(0, 0.5, 0)
+    end
+    local pts = { targetPos }
+    local hrp = targetChar:FindFirstChild("HumanoidRootPart")
+    local torso = targetChar:FindFirstChild("UpperTorso")
+        or targetChar:FindFirstChild("Torso")
+        or targetChar:FindFirstChild("LowerTorso")
+    if hrp then table.insert(pts, hrp.Position) end
+    if torso then table.insert(pts, torso.Position) end
+
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    params.FilterDescendantsInstances = { myChar, targetChar, Camera }
+    params.IgnoreWater = true
+
+    for _, pt in ipairs(pts) do
+        local r = workspace:Raycast(origin, pt - origin, params)
+        if r then
+            if r.Instance and r.Instance:IsDescendantOf(targetChar) then return true end
+        else
+            return true
+        end
+    end
+    return false
+end
+
+-- ============================================================
+-- ⑪ ターゲット取得
+-- ============================================================
+local function scanTargets()
+    local now = tick()
+    if State.LowLagMode and now - State.CacheTime < 0.05 and State.CachedTarget then
+        return State.CachedTarget
+    end
+    local bestCircle, bestCircleDist = nil, math.huge
+    local bestAny, bestAnyDist = nil, math.huge
+    local myHRP = getMyHRP()
+    local myPos = myHRP and myHRP.Position or Camera.CFrame.Position
+    local vp = Camera.ViewportSize
+    local cx, cy = vp.X/2, vp.Y/2
+
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr == LocalPlayer then continue end
+        if State.NoTeamKill and isTeammate(plr) then continue end
+        local char = plr.Character
+        if not char then continue end
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        if not hrp then continue end
+        local head = char:FindFirstChild("Head")
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if not hum or hum.Health <= 0 then continue end
+        local aimPos = head and head.Position or hrp.Position
+        if not hasLineOfSight(char, aimPos) then continue end
+        local sp, onScreen = Camera:WorldToViewportPoint(hrp.Position)
+        local wd = (hrp.Position - myPos).Magnitude
+        if onScreen and sp.Z > 0
+           and sp.X >= 0 and sp.X <= vp.X
+           and sp.Y >= 0 and sp.Y <= vp.Y then
+            if wd < bestAnyDist then
+                bestAnyDist = wd
+                bestAny = {plr=plr, char=char, hrp=hrp, head=head, dist=wd, screenPos=sp}
+            end
+            local dx, dy = sp.X - cx, sp.Y - cy
+            local cd = math.sqrt(dx*dx + dy*dy)
+            if cd <= State.CircleRadius and wd < bestCircleDist then
+                bestCircleDist = wd
+                bestCircle = {plr=plr, char=char, hrp=hrp, head=head, dist=wd, screenPos=sp, circleDist=cd}
+            end
+        end
+    end
+    local result = { circle = bestCircle, any = bestAny }
+    State.CachedTarget = result
+    State.CacheTime = now
+    return result
+end
+
+-- ============================================================
+-- ⑫ ヒットリモート
+-- ============================================================
+local function findHitRemotes()
+    local remotes = {}
+    local kws = {"hit","damage","attack","throw","slash","kill",
+        "stab","shoot","fire","swing","knife","gun",
+        "punch","melee","target","hurt","strike","weapon"}
+    local function m(n)
+        n = n:lower()
+        for _, k in ipairs(kws) do if n:find(k,1,true) then return true end end
+        return false
+    end
+    for _, obj in ipairs(ReplicatedStorage:GetDescendants()) do
+        if (obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction")) and m(obj.Name) then
+            table.insert(remotes, obj)
+        end
+    end
+    return remotes
+end
+State.HitRemotes = findHitRemotes()
+
+local function sendHit(target)
+    if not target then return end
+    for _, r in ipairs(State.HitRemotes) do
+        if r:IsA("RemoteEvent") then
+            pcall(function() r:FireServer(target.char, target.hrp) end)
+            pcall(function() r:FireServer(target.plr) end)
+            pcall(function() r:FireServer(target.hrp) end)
+        elseif r:IsA("RemoteFunction") then
+            pcall(function() r:InvokeServer(target.char, target.hrp) end)
+        end
+    end
+    State.HitCount = State.HitCount + 1
+end
+
+local function assistBulletPath(target)
+    if not target or not State.AimAssist then return end
+    local sp = target.screenPos or Camera:WorldToViewportPoint(target.hrp.Position)
+    if sp.Z <= 0 then return end
+    State.TouchPos = Vector2.new(sp.X, sp.Y)
+    State.TouchActive = true
+    DeltaAPI.tap(sp.X, sp.Y)   -- ★ Delta専用タップ
+end
+
+-- ============================================================
+-- ⑬ ツールフック
+-- ============================================================
+local function hookTool(tool)
+    if not tool or not tool:IsA("Tool") then return end
+    if tool:GetAttribute("AvS2_Hooked") then return end
+    tool:SetAttribute("AvS2_Hooked", true)
+    tool.Activated:Connect(function()
+        if not State.TriggerbotOn and not State.TapHit then return end
+        local t = scanTargets()
+        local target = t.circle or t.any
+        if target then task.wait(0.02); sendHit(target) end
+    end)
+end
+local function hookAllTools()
+    local char = LocalPlayer.Character
+    if char then
+        for _, o in ipairs(char:GetChildren()) do
+            if o:IsA("Tool") then hookTool(o) end
+        end
+    end
+    local bp = LocalPlayer:FindFirstChildOfClass("Backpack")
+    if bp then
+        for _, o in ipairs(bp:GetChildren()) do
+            if o:IsA("Tool") then hookTool(o) end
+        end
+    end
+end
+
+-- ============================================================
+-- ⑭ 射撃
+-- ============================================================
+local function doFire(forceTarget)
+    local now = tick()
+    if now - State.LastFireTime < State.AutoFireDelay then return false end
+    State.LastFireTime = now
+    local target = forceTarget
+    if not target then
+        local t = scanTargets()
+        target = t.circle or t.any
+    end
+    if not target then return false end
+    assistBulletPath(target)
+    local tool = getEquippedTool()
+    if tool then pcall(function() tool:Activate() end) end
+    task.wait(0.02)
+    local t2 = scanTargets()
+    local t2target = t2.circle or t2.any
+    if t2target then sendHit(t2target) end
+    StatusLabel.Text = "🎯 " .. target.plr.Name .. " | " .. math.floor(target.dist)
+    return true
+end
+
+local function doTapHit()
+    if not State.TapHit then return end
+    local now = tick()
+    if now - State.LastHitTime < State.HitDelay then return end
+    State.LastHitTime = now
+    State.TapCount = State.TapCount + 1
+    doFire()
+end
+
+UserInputService.InputBegan:Connect(function(input, gpe)
+    if gpe then return end
+    if input.UserInputType == Enum.UserInputType.Touch then
+        if input.Position then
+            State.TouchPos = Vector2.new(input.Position.X, input.Position.Y)
+        end
+        doTapHit()
+    end
+end)
+UserInputService.TouchMoved:Connect(function(input, gpe)
+    if gpe then return end
+    if input.Position then
+        State.TouchPos = Vector2.new(input.Position.X, input.Position.Y)
+    end
+    if State.TapHit then doTapHit() end
+end)
+UserInputService.TouchEnded:Connect(function() State.TouchActive = false end)
+
+-- ============================================================
+-- ⑮ キャラ追加
+-- ============================================================
+local function applyTeamFilter(char)
+    if not State.NoTeamKill then return end
+    task.wait(0.5)
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr == LocalPlayer then continue end
+        if isTeammate(plr) and plr.Character then
+            for _, part in ipairs(plr.Character:GetDescendants()) do
+                if part:IsA("BasePart") then
+                    pcall(function() part.CanCollide = false end)
+                end
+            end
+        end
+    end
+end
+
+LocalPlayer.CharacterAdded:Connect(function(char)
+    task.wait(1)
+    hookAllTools()
+    applyTeamFilter(char)
+    local bp = LocalPlayer:FindFirstChildOfClass("Backpack")
+    if bp then bp.ChildAdded:Connect(function(c) if c:IsA("Tool") then hookTool(c) end end) end
+    char.ChildAdded:Connect(function(c) if c:IsA("Tool") then hookTool(c) end end)
+end)
+if LocalPlayer.Character then
+    hookAllTools()
+    applyTeamFilter(LocalPlayer.Character)
+    local bp = LocalPlayer:FindFirstChildOfClass("Backpack")
+    if bp then bp.ChildAdded:Connect(function(c) if c:IsA("Tool") then hookTool(c) end end) end
+end
+Players.PlayerAdded:Connect(function(plr)
+    plr.CharacterAdded:Connect(function(char)
+        if State.NoTeamKill then applyTeamFilter(char) end
+    end)
+end)
+
+-- ============================================================
+-- ⑯ 腹吸い付き（Delta専用）
+-- ============================================================
+local function getAimPart(char)
+    if not char then return nil end
+    return char:FindFirstChild("UpperTorso")
+        or char:FindFirstChild("Torso")
+        or char:FindFirstChild("LowerTorso")
+        or char:FindFirstChild("HumanoidRootPart")
+end
+local function isTargetAlive(plr)
+    if not plr or not plr.Character then return false end
+    local hum = plr.Character:FindFirstChildOfClass("Humanoid")
+    return hum and hum.Health > 0
+end
+
+local function updateCameraLock()
+    if not State.CameraLock then
+        State.LockedTarget, State.LockedHRP, State.LockedChar, State.TrackedPlayer = nil,nil,nil,nil
+        return
+    end
+    local tracked = State.TrackedPlayer
+    local trackedValid = false
+    if tracked and isTargetAlive(tracked) then
+        local char = tracked.Character
+        local aimPart = getAimPart(char)
+        if aimPart and hasLineOfSight(char, aimPart.Position) then
+            trackedValid = true
+        end
+    end
+    if not trackedValid then
+        State.TrackedPlayer, State.LockedTarget, State.LockedHRP, State.LockedChar = nil,nil,nil,nil
+        local t = scanTargets()
+        local target = t.circle
+        if target then
+            State.TrackedPlayer = target.plr
+            State.LockedTarget = target.plr
+            State.LockedHRP    = target.hrp
+            State.LockedChar   = target.char
+            trackedValid = true
+        end
+    end
+    if not State.TrackedPlayer then return end
+    local char = State.TrackedPlayer.Character
+    if not char then return end
+    local aimPart = getAimPart(char)
+    if not aimPart then return end
+    if not hasLineOfSight(char, aimPart.Position) then return end
+
+    local camPos = Camera.CFrame.Position
+    local lookAt = CFrame.lookAt(camPos, aimPart.Position)
+    local raw = math.clamp(State.LockStrength, 0.05, 1.0)
+    local alpha = 0.35 + raw * 0.65
+    if State.TrackUntilLost then alpha = math.min(1.0, alpha + 0.08) end
+    Camera.CFrame = Camera.CFrame:Lerp(lookAt, alpha)
+end
+
+-- ============================================================
+-- ⑰ メインループ
+-- ============================================================
+RunService.RenderStepped:Connect(function()
+    if State.ShowCircle then CircleFrame.Position = UDim2.new(0.5, 0, 0.5, 0) end
+    updateCameraLock()
+    local now = tick()
+    if State.AutoFireCircle then
+        local t = scanTargets()
+        if t.circle then
+            cStroke.Color = Color3.fromRGB(255,60,60)
+            if now - State.LastFireTime >= State.AutoFireDelay then doFire(t.circle) end
+        else
+            cStroke.Color = Color3.fromRGB(0,255,130)
+        end
+        return
+    end
+    if State.TriggerbotOn then
+        local t = scanTargets()
+        local target = t.circle or t.any
+        if target then
+            cStroke.Color = Color3.fromRGB(255,60,60)
+            if now - State.LastFireTime >= State.AutoFireDelay then doFire(target) end
+        else
+            cStroke.Color = Color3.fromRGB(0,255,130)
+        end
+    else
+        cStroke.Color = Color3.fromRGB(120,120,140)
+    end
+end)
+
+-- ============================================================
+-- ⑱ ステータス更新
+-- ============================================================
+task.spawn(function()
+    while true do
+        task.wait(State.LowLagMode and 0.8 or 0.4)
+        if State.TrackedPlayer and State.TrackedPlayer.Character then
+            local char = State.TrackedPlayer.Character
+            local hrp = char:FindFirstChild("HumanoidRootPart")
+            local myHRP = getMyHRP()
+            local dist = (hrp and myHRP) and math.floor((hrp.Position - myHRP.Position).Magnitude) or 0
+            StatusLabel.Text = "🎥 " .. State.TrackedPlayer.Name .. " | " .. dist
+        else
+            local t = scanTargets()
+            if t.circle then
+                StatusLabel.Text = "🔥 " .. t.circle.plr.Name .. " | " .. math.floor(t.circle.dist)
+            elseif t.any then
+                StatusLabel.Text = "👁 " .. t.any.plr.Name .. " | " .. math.floor(t.any.dist)
+            else
+                StatusLabel.Text = "Δ 探索中..."
+            end
+        end
+    end
+end)
+
+-- ============================================================
+-- ⑲ 起動通知
+-- ============================================================
+DeltaAPI.notify("AvS2-Delta EXCLUSIVE", "読み込み完了。左上のΔボタンをタップ。", 4)
+print("[AvS2-Delta EXCLUSIVE] 読み込み完了 | GUI親: " .. GuiParent:GetFullName())
+print("[AvS2-Delta EXCLUSIVE] ヒットリモート数: " .. #State.HitRemotes)
