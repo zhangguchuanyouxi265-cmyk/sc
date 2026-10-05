@@ -2,7 +2,7 @@
 --   Assassin vs Sheriff 2 - Delta EXCLUSIVE
 --   ------------------------------------------------
 --   ・Delta エグゼキューター専用
---   ・起動時に中央の枠でキー認証（key = bananahub）
+--   ・起動時に毎回キー認証（key = bananahub）
 --   ・認証成功後に本体起動
 --   ・壁貫通しない（3点レイキャスト）
 --   ・腹（Torso）に硬く吸い付き
@@ -26,34 +26,11 @@ local LocalPlayer = Players.LocalPlayer
 local Camera      = workspace.CurrentCamera
 
 -- ============================================================
--- ② キー認証（中央に枠 / bananahub 必須）
---    認証成功するまでスクリプト本体は一切起動しない
+-- ② キー認証（毎回必須 / 保存なし）
 -- ============================================================
 local CORRECT_KEY = "bananahub"
-local KEY_FILE    = "Delta/Workspace/AvS2_Delta_Key.txt"
-
-local function keyFileExists()
-    return isfile and isfile(KEY_FILE)
-end
-local function readKeyFile()
-    if not keyFileExists() then return nil end
-    local ok, s = pcall(readfile, KEY_FILE)
-    if ok then return tostring(s):gsub("%s+", "") end
-    return nil
-end
-local function writeKeyFile(k)
-    if writefile then
-        pcall(function() writefile(KEY_FILE, k) end)
-    end
-end
 
 local function askKeyBlocking()
-    -- 保存済みキーがあれば即OK
-    if readKeyFile() == CORRECT_KEY then
-        return true
-    end
-
-    -- GUI親
     local guiParent
     if gethui then
         local ok, hui = pcall(gethui)
@@ -69,9 +46,6 @@ local function askKeyBlocking()
         end
     end)
 
-    ------------------------------------------------------------
-    -- 画面全体を覆う暗幕
-    ------------------------------------------------------------
     local keyGui = Instance.new("ScreenGui")
     keyGui.Name = "AvS2_Delta_Key"
     keyGui.ResetOnSpawn = false
@@ -86,7 +60,6 @@ local function askKeyBlocking()
     overlay.BorderSizePixel = 0
     overlay.Parent = keyGui
 
-    -- 中央の枠
     local frame = Instance.new("Frame")
     frame.AnchorPoint = Vector2.new(0.5, 0.5)
     frame.Position = UDim2.new(0.5, 0, 0.5, 0)
@@ -117,7 +90,7 @@ local function askKeyBlocking()
     sub.Size = UDim2.new(1, 0, 0, 22)
     sub.Position = UDim2.new(0, 0, 0, 56)
     sub.BackgroundTransparency = 1
-    sub.Text = "キーを入力してください"
+    sub.Text = "毎回キーを入力してください"
     sub.TextColor3 = Color3.fromRGB(200, 200, 210)
     sub.TextSize = 14
     sub.Font = Enum.Font.GothamMedium
@@ -178,7 +151,6 @@ local function askKeyBlocking()
         if input == CORRECT_KEY then
             status.TextColor3 = Color3.fromRGB(0, 255, 130)
             status.Text = "✔ 認証成功！起動します..."
-            writeKeyFile(CORRECT_KEY)
             submit.Text = "✔ OK"
             task.wait(0.5)
             keyGui:Destroy()
