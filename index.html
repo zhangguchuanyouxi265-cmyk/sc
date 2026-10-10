@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>コード入力</title>
+<style>
+  body {
+    background:#fff; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; height:100vh; margin:0;
+    font-family:sans-serif;
+  }
+  textarea {
+    width:80%; max-width:300px; height:80px; padding:8px;
+    font-family:monospace; font-size:13px;
+    border:1px solid #ccc; border-radius:6px; resize:none;
+  }
+  button {
+    margin-top:10px; padding:8px 24px; font-size:14px;
+    background:#333; color:#fff; border:none; border-radius:6px; cursor:pointer;
+  }
+  #msg { margin-top:8px; color:green; font-size:13px; }
+  #siteurl {
+    margin-top:8px; font-size:12px; color:#333;
+    max-width:90%; word-break:break-all; text-align:center;
+  }
+</style>
+</head>
+<body>
+  <textarea id="codeInput" placeholder="ここに文字を入力..."></textarea>
+  <button id="runBtn">実行</button>
+  <div id="msg"></div>
+  <div id="siteurl"></div>
+
+<script>
+document.getElementById('runBtn').addEventListener('click', () => {
+  const text = document.getElementById('codeInput').value;
+
+  const safe = text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+
+  const page = `<!DOCTYPE html><html><head><meta charset="UTF-8">
+<style>html,body{margin:0;padding:0;background:#fff;}
+body{white-space:pre-wrap;word-break:break-all;font-family:monospace;}</style>
+</head><body>${safe}</body></html>`;
+
+  const blob = new Blob([page], { type:'text/html' });
+  const url = URL.createObjectURL(blob);
+
+  document.getElementById('siteurl').textContent = url;
+  navigator.clipboard.writeText(url).then(()=>{
+    document.getElementById('msg').textContent = 'URLをコピーしました！';
+  }).catch(()=>{
+    document.getElementById('msg').textContent = 'URL: 下に表示(手動でコピー)';
+  });
+});
+</script>
+</body>
+</html>
