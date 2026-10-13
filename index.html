@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MyApp - チャット</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,"Hiragino Sans",sans-serif;background:#0f172a;color:#e2e8f0;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+  .screen{display:none;flex:1;flex-direction:column}
+  .screen.active{display:flex}
+  #nameScreen{justify-content:center;align-items:center}
+  .card{background:#1e293b;padding:32px;border-radius:16px;width:90%;max-width:360px;text-align:center}
+  h1{font-size:20px;margin-bottom:20px}
+  input{width:100%;padding:12px;border-radius:8px;border:1px solid #334155;background:#0f172a;color:#e2e8f0;font-size:16px;margin-bottom:16px}
+  input:focus{outline:none;border-color:#38bdf8}
+  button{padding:12px;border:none;border-radius:8px;background:#38bdf8;color:#0f172a;font-size:15px;font-weight:bold;cursor:pointer;transition:.2s}
+  button:hover{background:#0ea5e9}
+  button:disabled{background:#475569;cursor:not-allowed}
+  header{padding:14px 18px;background:#1e293b;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #334155}
+  header .me{font-weight:bold;color:#38bdf8}
+  .main{flex:1;display:flex;overflow:hidden}
+  .sidebar{width:220px;background:#1e293b;padding:14px;border-right:1px solid #334155;overflow-y:auto}
+  .sidebar h2{font-size:13px;color:#94a3b8;margin-bottom:10px}
+  .friend{padding:10px;border-radius:8px;cursor:pointer;margin-bottom:6px;background:#0f172a;display:flex;align-items:center;gap:8px}
+  .friend:hover,.friend.active{background:#334155}
+  .dot{width:8px;height:8px;border-radius:50%;background:#22c55e}
+  .dot.off{background:#64748b}
+  .chat{flex:1;display:flex;flex-direction:column}
+  .chat-header{padding:14px 18px;border-bottom:1px solid #334155;display:flex;justify-content:space-between;align-items:center}
+  .call-btn{padding:8px 16px;font-size:14px;background:#22c55e;color:#fff;width:auto}
+  .call-btn:hover{background:#16a34a}
+  .messages{flex:1;padding:18px;overflow-y:auto;display:flex;flex-direction:column;gap:10px}
+  .msg{max-width:70%;padding:10px 14px;border-radius:14px;font-size:15px;word-wrap:break-word}
+  .msg.me{align-self:flex-end;background:#38bdf8;color:#0f172a}
+  .msg.other{align-self:flex-start;background:#334155}
+  .input-row{padding:12px;border-top:1px solid #334155;display:flex;gap:8px}
+  .input-row input{margin:0}
+  .input-row button{padding:0 20px;width:auto}
+  .empty{flex:1;display:flex;justify-content:center;align-items:center;color:#64748b;text-align:center;padding:20px}
+  #callModal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:100;justify-content:center;align-items:center}
+  #callModal.active{display:flex}
+  .call-box{background:#1e293b;padding:24px;border-radius:16px;text-align:center;width:90%;max-width:420px;position:relative}
+  .call-box h2{margin-bottom:16px;font-size:18px}
+  .timer{font-size:28px;margin:16px 0;color:#22c55e;font-variant-numeric:tabular-nums}
+  .call-box button{background:#ef4444;color:#fff;width:100%;margin-top:8px}
+  .call-box button:hover{background:#dc2626}
+  .call-box .accept{background:#22c55e}
+  .call-box .accept:hover{background:#16a34a}
+  video{width:100%;border-radius:10px;margin-top:10px;background:#000}
+  #localVideo{max-width:120px;position:absolute;top:14px;right:14px;border-radius:8px;z-index:1}
+  #incomingModal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:200;justify-content:center;align-items:center}
+  #incomingModal.active{display:flex}
+</style>
+</head>
+<body>
+
+<!-- ① 名前決定 -->
+<div id="nameScreen" class="screen active">
+  <div class="card">
+    <h1>👤 名前を決めよう</h1>
+    <input id="nameInput" placeholder="名前を入力..." maxlength="16" autocomplete="off">
+    <button id="decideBtn" disabled>決定</button>
+    <p id="nameErr" style="color:#f87171;font-size:13px;margin-top:10px;"></p>
+  </div>
+</div>
+
+<!-- ② メイン -->
+<div id="mainScreen" class="screen">
+  <header>
+    <span>💬 MyApp</span>
+    <span class="me" id="myNameLabel"></span>
+  </header>
+  <div class="main">
+    <div class="sidebar">
+      <h2>ユーザー一覧</h2>
+      <div id="friendList"></div>
+    </div>
+    <div class="chat">
+      <div id="chatEmpty" class="empty">← ユーザーを選んでDM開始</div>
+      <div id="chatView" style="display:none;flex:1;flex-direction:column;">
+        <div class="chat-header">
+          <span id="chatName"></span>
+          <div style="display:flex;gap:6px;">
+            <button class="call-btn" id="voiceCallBtn">🎤 音声</button>
+            <button class="call-btn" id="videoCallBtn">📹 ビデオ</button>
+          </div>
+        </div>
+        <div class="messages" id="messages"></div>
+        <div class="input-row">
+          <input id="msgInput" placeholder="メッセージを入力..." autocomplete="off">
+          <button id="sendBtn">送信</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 通話モーダル -->
+<div id="callModal">
+  <div class="call-box">
+    <video id="localVideo" autoplay muted playsinline></video>
+    <h2 id="callTitle">通話中...</h2>
+    <video id="remoteVideo" autoplay playsinline></video>
+    <div class="timer" id="callTimer">00:00</div>
+    <button id="endCallBtn">終了</button>
+  </div>
+</div>
+
+<!-- 着信モーダル -->
+<div id="incomingModal">
+  <div class="call-box">
+    <h2 id="incomingTitle">着信...</h2>
+    <button class="accept" id="acceptBtn">応答</button>
+    <button id="rejectBtn">拒否</button>
+  </div>
+</div>
+
+<audio id="remoteAudio" autoplay></audio>
+
+<script>
+/* =====================================================================
+   全部入りチャットアプリ
+   - BroadcastChannel … 同じブラウザ内の複数タブで通信（ネット通信シミュレート）
+   - IndexedDB … データ永続化（リロードしても消えない）
+   - WebRTC … 音声/ビデオ通話
+===================================================================== */
+
+const $ = id => document.getElementById(id);
+const BC = ('BroadcastChannel' in window) ? new BroadcastChannel('myapp-chat') : null;
+
+let myName = "";
+let users = [];              // 全ユーザー
+let online = [];             // オンライン
+let currentFriend = null;
+let db = null;
+
+/* ============ IndexedDB（データ永続化） ============ */
+function openDB() {
+  return new Promise((resolve) => {
+    const req = indexedDB.open('MyAppDB', 1);
+    req.onupgradeneeded = e => {
+      const d = e.target.result;
+      if (!d.objectStoreNames.contains('users')) d.createObjectStore('users', { keyPath: 'name' });
+      if (!d.objectStoreNames.contains('messages')) d.createObjectStore('messages', { keyPath: 'id', autoIncrement: true });
+    };
+    req.onsuccess = e => { db = e.target.result; resolve(); };
+    req.onerror = () => resolve();
+  });
+}
+
+function dbPut(store, data) {
+  return new Promise((resolve) => {
+    if (!db) return resolve();
+    const tx = db.transaction(store, 'readwrite');
+    tx.objectStore(store).put(data);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => resolve();
+  });
+}
+
+function dbGetAll(store) {
+  return new Promise((resolve) => {
+    if (!db) return resolve([]);
+    const tx = db.transaction(store, 'readonly');
+    const req = tx.objectStore(store).getAll();
+    req.onsuccess = () => resolve(req.result || []);
+    req.onerror = () => resolve([]);
+  });
+}
+
+function dbQuery(store, fn) {
+  return new Promise((resolve) => {
+    if (!db) return resolve([]);
+    const tx = db.transaction(store, 'readonly');
+    const req = tx.objectStore(store).getAll();
+    req.onsuccess = () => resolve((req.result || []).filter(fn));
+    req.onerror = () => resolve([]);
+  });
+}
+
+/* ============ 起動時にデータ復元 ============ */
+(async () => {
+  await openDB();
+  const savedUsers = await dbGetAll('users');
+  users = savedUsers.map(u => u.name);
+  // 保存済みの名前があれば自動ログイン候補として表示
+  const savedMe = localStorage.getItem('myName');
+  if (savedMe) {
+    $("nameInput").value = savedMe;
+    $("decideBtn").disabled = false;
+  }
+})();
+
+/* ============ ① 名前決定 ============ */
+$("nameInput").addEventListener("input", e => {
+  $("decideBtn").disabled = e.target.value.trim() === "";
+});
+
+$("decideBtn").onclick = async () => {
+  const name = $("nameInput").value.trim();
+  if (!name) return;
+
+  // 全ユーザー（過去含む）から登録
+  if (!users.includes(name)) users.push(name);
+  await dbPut('users', { name, createdAt: Date.now() });
+  localStorage.setItem('myName', name);
+
+  myName = name;
+  $("myNameLabel").textContent = myName;
+  $("nameScreen").classList.remove("active");
+  $("mainScreen").classList.add("active");
+  renderFriends();
+
+  // 自分がオンラインになったことを他タブへ通知
+  BC && BC.postMessage({ type: 'join', name: myName });
+  BC && BC.postMessage({ type: 'who-is-online', from: myName });
+};
+
+/* ============ BroadcastChannel = ネット通信 ============ */
+if (BC) {
+  BC.onmessage = async (ev) => {
+    const { type, ...data } = ev.data;
+
+    if (type === 'join') {
+      if (data.name !== myName && !users.includes(data.name)) users.push(data.name);
+      if (data.name !== myName && !online.includes(data.name)) online.push(data.name);
+      renderFriends();
+      BC.postMessage({ type: 'im-online', name: myName });
+    }
+    else if (type === 'im-online' || type === 'who-is-online') {
+      if (data.name !== myName && !online.includes(data.name)) online.push(data.name);
+      if (data.name !== myName && !users.includes(data.name)) users.push(data.name);
+      renderFriends();
+    }
+    else if (type === 'dm') {
+      // 自分宛のメッセージ
+      if (data.to === myName) {
+        const msg = { from: data.from, to: data.to, text: data.text, time: data.time };
+        await dbPut('messages', msg);
+        if (currentFriend === data.from) appendMessage(msg);
+      }
+    }
+    else if (type === 'leave') {
+      online = online.filter(n => n !== data.name);
+      renderFriends();
+    }
+    else if (type === 'call-request') {
+      if (data.to === myName) showIncoming(data.from, data.video);
+    }
+    else if (type === 'call-accept') {
+      if (data.to === myName) startWebRTC(true, data.from);
+    }
+    else if (type === 'call-reject' || type === 'call-end') {
+      if (data.to === myName) endCallLocal();
+    }
+    else if (type === 'webrtc-offer') {
+      if (data.to === myName) handleOffer(data.from, data.offer);
+    }
+    else if (type === 'webrtc-answer') {
+      if (data.to === myName) handleAnswer(data.answer);
+    }
+    else if (type === 'webrtc-ice') {
+      if (data.to === myName) handleICE(data.candidate);
+    }
+  };
+
+  window.addEventListener('beforeunload', () => {
+    BC.postMessage({ type: 'leave', name: myName });
+  });
+}
+
+/* ============ オンライン状態の定期同期 ============ */
+setInterval(() => {
+  if (myName && BC) {
+    BC.postMessage({ type: 'join', name: myName });
+  }
+}, 3000);
+
+/* ============ ユーザーリスト表示 ============ */
+function renderFriends() {
+  const list = $("friendList");
+  list.innerHTML = "";
+  const others = users.filter(n => n !== myName);
+  if (others.length === 0) {
+    list.innerHTML = '<div style="color:#64748b;font-size:13px;">まだ他にユーザーがいません</div>';
+    return;
+  }
+  others.forEach(name => {
+    const isOnline = online.includes(name);
+    const div = document.createElement("div");
+    div.className = "friend" + (currentFriend === name ? " active" : "");
+    div.innerHTML = `<span class="dot ${isOnline ? "" : "off"}"></span><span>${escapeHtml(name)}</span>`;
+    div.onclick = () => openChat(name);
+    list.appendChild(div);
+  });
+}
+
+/* ============ DM ============ */
+async function openChat(name) {
+  currentFriend = name;
+  $("chatEmpty").style.display = "none";
+  $("chatView").style.display = "flex";
+  $("chatName").textContent = name;
+
+  $("messages").innerHTML = "";
+  const history = await dbQuery('messages', m =>
+    (m.from === myName && m.to === name) || (m.from === name && m.to === myName)
+  );
+  history.sort((a, b) => a.time - b.time);
+  history.forEach(appendMessage);
+
+  renderFriends();
+  $("msgInput").focus();
+}
+
+function appendMessage(m) {
+  const div = document.createElement("div");
+  div.className = "msg " + (m.from === myName ? "me" : "other");
+  div.textContent = m.text;
+  $("messages").appendChild(div);
+  $("messages").scrollTop = $("messages").scrollHeight;
+}
+
+async function sendMessage() {
+  const text = $("msgInput").value.trim();
+  if (!text || !currentFriend) return;
+
+  const msg = { from: myName, to: currentFriend, text, time: Date.now() };
+  await dbPut('messages', msg);       // 永続化
+  appendMessage(msg);                  // 自分に表示
+  BC && BC.postMessage({ type: 'dm', ...msg });  // 相手に送信
+
+  $("msgInput").value = "";
+}
+$("sendBtn").onclick = sendMessage;
+$("msgInput").addEventListener("keydown", e => {
+  if (e.key === "Enter") sendMessage();
+});
+
+/* ============ 通話（WebRTC） ============ */
+let peerConn = null;
+let localStream = null;
+let callTarget = null;
+let callSeconds = 0;
+let callInterval = null;
+let isVideoCall = false;
+let pendingOffer = null;
+let pendingCandidates = [];
+
+$("voiceCallBtn").onclick = () => initiateCall(false);
+$("videoCallBtn").onclick = () => initiateCall(true);
+
+function initiateCall(video) {
+  if (!currentFriend) return;
+  isVideoCall = video;
+  callTarget = currentFriend;
+  BC && BC.postMessage({ type: 'call-request', from: myName, to: currentFriend, video });
+  startWebRTC(false, currentFriend);
+}
+
+function showIncoming(from, video) {
+  isVideoCall = video;
+  callTarget = from;
+  $("incomingTitle").textContent = `${from} から${video ? 'ビデオ' : '音声'}通話`;
+  $("incomingModal").classList.add("active");
+}
+
+$("acceptBtn").onclick = () => {
+  $("incomingModal").classList.remove("active");
+  BC && BC.postMessage({ type: 'call-accept', from: myName, to: callTarget });
+  startWebRTC(false, callTarget);
+};
+
+$("rejectBtn").onclick = () => {
+  BC && BC.postMessage({ type: 'call-reject', from: myName, to: callTarget });
+  $("incomingModal").classList.remove("active");
+};
+
+async function startWebRTC(isCaller, target) {
+  // 通話UI表示
+  $("callModal").classList.add("active");
+  $("callTitle").textContent = `${target} と通話中...`;
+  $("callTimer").textContent = "00:00";
+  callSeconds = 0;
+  clearInterval(callInterval);
+  callInterval = setInterval(() => {
+    callSeconds++;
+    const m = String(Math.floor(callSeconds / 60)).padStart(2, "0");
+    const s = String(callSeconds % 60).padStart(2, "0");
+    $("callTimer").textContent = `${m}:${s}`;
+  }, 1000);
+
+  // メディア取得
+  try {
+    localStream = await navigator.mediaDevices.getUserMedia({
+      audio: true,
+      video: isVideoCall
+    });
+    $("localVideo").srcObject = localStream;
+    $("localVideo").style.display = isVideoCall ? "block" : "none";
+  } catch (e) {
+    alert("マイク/カメラの許可が必要です: " + e.message);
+    endCallLocal();
+    return;
+  }
+
+  peerConn = new RTCPeerConnection({
+    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+  });
+
+  localStream.getTracks().forEach(t => peerConn.addTrack(t, localStream));
+
+  peerConn.ontrack = (ev) => {
+    if (ev.streams[0]) {
+      if (isVideoCall) {
+        $("remoteVideo").srcObject = ev.streams[0];
+        $("remoteVideo").style.display = "block";
+      } else {
+        $("remoteAudio").srcObject = ev.streams[0];
+      }
+    }
+  };
+
+  peerConn.onicecandidate = (ev) => {
+    if (ev.candidate && BC) {
+      BC.postMessage({ type: 'webrtc-ice', from: myName, to: target, candidate: ev.candidate });
+    }
+  };
+
+  // 保留中のICEを追加
+  for (const c of pendingCandidates) {
+    try { await peerConn.addIceCandidate(c); } catch (e) {}
+  }
+  pendingCandidates = [];
+
+  if (isCaller) {
+    const offer = await peerConn.createOffer();
+    await peerConn.setLocalDescription(offer);
+    BC && BC.postMessage({ type: 'webrtc-offer', from: myName, to: target, offer });
+  } else if (pendingOffer) {
+    await peerConn.setRemoteDescription(pendingOffer);
+    const answer = await peerConn.createAnswer();
+    await peerConn.setLocalDescription(answer);
+    BC && BC.postMessage({ type: 'webrtc-answer', from: myName, to: target, answer });
+    pendingOffer = null;
+  }
+}
+
+async function handleOffer(from, offer) {
+  if (peerConn) {
+    // 既存接続に再ネゴ
+    await peerConn.setRemoteDescription(offer);
+    const answer = await peerConn.createAnswer();
+    await peerConn.setLocalDescription(answer);
+    BC && BC.postMessage({ type: 'webrtc-answer', from: myName, to: from, answer });
+  } else {
+    pendingOffer = offer;
+  }
+}
+
+async function handleAnswer(answer) {
+  if (peerConn) {
+    try { await peerConn.setRemoteDescription(answer); } catch (e) {}
+  }
+}
+
+async function handleICE(candidate) {
+  if (peerConn && peerConn.remoteDescription) {
+    try { await peerConn.addIceCandidate(candidate); } catch (e) {}
+  } else {
+    pendingCandidates.push(candidate);
+  }
+}
+
+$("endCallBtn").onclick = () => {
+  if (callTarget) BC && BC.postMessage({ type: 'call-end', from: myName, to: callTarget });
+  endCallLocal();
+};
+
+function endCallLocal() {
+  clearInterval(callInterval);
+  if (peerConn) { try { peerConn.close(); } catch (e) {} peerConn = null; }
+  if (localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
+  $("localVideo").srcObject = null;
+  $("remoteVideo").srcObject = null;
+  $("remoteAudio").srcObject = null;
+  $("callModal").classList.remove("active");
+  $("incomingModal").classList.remove("active");
+  pendingOffer = null;
+  pendingCandidates = [];
+  callTarget = null;
+}
+
+/* ============ util ============ */
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  }[c]));
+}
+</script>
+</body>
+</html>
