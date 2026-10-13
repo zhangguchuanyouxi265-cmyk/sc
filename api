@@ -1,0 +1,18 @@
+import discord
+from discord import app_commands
+
+class CodeButton(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None) # 永続化する場合
+
+    @discord.ui.button(label="コードを取得", style=discord.ButtonStyle.green, custom_id="get_code")
+    async def get_code(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # ここでコードを発行・取得する処理を入れる
+        code = "ABC-123-XYZ"
+        # コードをephemeral（本人にしか見えない）で返信
+        await interaction.response.send_message(f"あなたのコード: `{code}`", ephemeral=True)
+
+# スラッシュコマンドの登録
+@bot.tree.command(name="配布", description="コード配布用ボタンを表示します")
+async def distribute(interaction: discord.Interaction):
+    await interaction.response.send_message("下のボタンを押してコードを受け取ってください。", view=CodeButton())
