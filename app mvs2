@@ -1,0 +1,314 @@
+--[[
+  ============================================================
+  :: SLIM :: v7.2.0 :: DELTA ENCRYPTED EDITION ::
+  ------------------------------------------------------------
+  5-layer encoded loader. No readable source in file.
+  Edit only MY_USERID, then Execute in Delta.
+  Features: Silent Aim / TeamKill / Aim Part + collapsible UI
+  ============================================================
+]]
+
+-- ============================================================
+-- ▼ STEP 1: 自分のRoblox UserId（数値）▼
+-- ============================================================
+local MY_USERID = 0
+
+-- ============================================================
+-- ▼ STEP 2: 内部コード（ここは編集しない）▼
+-- ============================================================
+local RAW_CODE = [==[
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local player = Players.LocalPlayer
+
+local CFG = {
+    Silent      = true,
+    TeamKill    = false,
+    AimPart     = "Head",
+    MaxDistance = 1000,
+    WallCheck   = true,
+}
+
+local SilentCtrl = { TargetPart = nil }
+
+local function isEnemy(p)
+    if p == player then return false end
+    if p.Team == player.Team then return CFG.TeamKill end
+    return true
+end
+
+local function raycastOk(targetPart)
+    local char = player.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not char or not hrp then return false end
+    local params = RaycastParams.new()
+    params.FilterDescendantsInstances = {char, targetPart.Parent}
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    params.IgnoreWater = true
+    local hit = workspace:Raycast(hrp.Position, targetPart.Position - hrp.Position, params)
+    return hit == nil
+end
+
+local function getBestTargetPart()
+    local char = player.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not char or not hrp then return nil end
+    local closest, best = math.huge, nil
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= player and p.Character and isEnemy(p) then
+            local hum = p.Character:FindFirstChildOfClass("Humanoid")
+            if hum and hum.Health > 0 then
+                local part = p.Character:FindFirstChild(CFG.AimPart)
+                    or p.Character:FindFirstChild("Head")
+                    or p.Character:FindFirstChild("HumanoidRootPart")
+                if part then
+                    local dist = (hrp.Position - part.Position).Magnitude
+                    if dist <= CFG.MaxDistance and dist < closest then
+                        if not CFG.WallCheck or raycastOk(part) then
+                            closest = dist
+                            best = part
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return best
+end
+
+local function hookSilent()
+    if type(hookfunction) ~= "function" then return false end
+    local ok, CombatClient = pcall(function()
+        return require(game.ReplicatedStorage.Client.Madwork.CombatClient)
+    end)
+    if not ok or not CombatClient then return false end
+    task.spawn(function()
+        while true do
+            task.wait(0.05)
+            SilentCtrl.TargetPart = CFG.Silent and getBestTargetPart() or nil
+        end
+    end)
+    local old
+    old = hookfunction(CombatClient.NewLocalEvent, function(data)
+        local char = player.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if not char or not hrp then return old(data) end
+        if CFG.Silent and SilentCtrl.TargetPart and data and typeof(data) == "table" then
+            local myPos = hrp.Position
+            data.Position  = myPos
+            data.Direction = (SilentCtrl.TargetPart.Position - myPos).Unit
+        end
+        return old(data)
+    end)
+    return true
+end
+
+hookSilent()
+
+local PlayerGui = player:WaitForChild("PlayerGui")
+local old = PlayerGui:FindFirstChild("SLIM_Menu")
+if old then old:Destroy() end
+
+local gui = Instance.new("ScreenGui")
+gui.Name = "SLIM_Menu"
+gui.ResetOnSpawn = false
+gui.IgnoreGuiInset = true
+gui.Parent = PlayerGui
+
+local OPEN_SIZE  = UDim2.new(0, 200, 0, 150)
+local CLOSE_SIZE = UDim2.new(0, 200, 0, 26)
+
+local frame = Instance.new("Frame")
+frame.Size = OPEN_SIZE
+frame.Position = UDim2.new(0, 15, 0, 15)
+frame.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
+frame.BackgroundTransparency = 0.2
+frame.BorderSizePixel = 0
+frame.ClipsDescendants = true
+frame.Parent = gui
+Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, 0, 0, 26)
+title.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
+title.BorderSizePixel = 0
+title.Text = "SLIM v7.2   [- ]"
+title.TextColor3 = Color3.fromRGB(255, 255, 255)
+title.Font = Enum.Font.GothamBold
+title.TextSize = 12
+title.Parent = frame
+
+local function mkBtn(text, y)
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.new(1, -20, 0, 32)
+    b.Position = UDim2.new(0, 10, 0, y)
+    b.BackgroundColor3 = Color3.fromRGB(60, 60, 80)
+    b.TextColor3 = Color3.fromRGB(255, 255, 255)
+    b.Font = Enum.Font.GothamBold
+    b.TextSize = 12
+    b.Text = text
+    b.Parent = frame
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 6)
+    return b
+end
+
+local silentBtn = mkBtn("Silent: ON",   32)
+local teamBtn   = mkBtn("TeamKill: OFF", 68)
+local aimBtn    = mkBtn("Aim: Head",     104)
+
+local isOpen = true
+local function toggleOpen()
+    isOpen = not isOpen
+    TweenService:Create(frame, TweenInfo.new(0.25, Enum.EasingStyle.Quad), {
+        Size = isOpen and OPEN_SIZE or CLOSE_SIZE
+    }):Play()
+    title.Text = "SLIM v7.2   " .. (isOpen and "[- ]" or "[+ ]")
+end
+
+title.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        toggleOpen()
+    end
+end)
+
+local dragging, dragStart, startPos
+title.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging, dragStart, startPos = true, input.Position, frame.Position
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then dragging = false end
+        end)
+    end
+end)
+UserInputService.InputChanged:Connect(function(input)
+    if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        local d = input.Position - dragStart
+        frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
+    end
+end)
+
+silentBtn.MouseButton1Click:Connect(function()
+    CFG.Silent = not CFG.Silent
+    silentBtn.Text = "Silent: " .. (CFG.Silent and "ON" or "OFF")
+    silentBtn.BackgroundColor3 = CFG.Silent and Color3.fromRGB(60, 140, 60) or Color3.fromRGB(60, 60, 80)
+end)
+
+teamBtn.MouseButton1Click:Connect(function()
+    CFG.TeamKill = not CFG.TeamKill
+    teamBtn.Text = "TeamKill: " .. (CFG.TeamKill and "ON" or "OFF")
+    teamBtn.BackgroundColor3 = CFG.TeamKill and Color3.fromRGB(200, 50, 50) or Color3.fromRGB(60, 60, 80)
+end)
+
+aimBtn.MouseButton1Click:Connect(function()
+    local order = { "Head", "HumanoidRootPart", "UpperTorso" }
+    local cur = 1
+    for i, v in ipairs(order) do if v == CFG.AimPart then cur = i break end end
+    CFG.AimPart = order[(cur % #order) + 1]
+    aimBtn.Text = "Aim: " .. CFG.AimPart
+end)
+]==]
+
+-- ============================================================
+-- 内部エンジン（編集不要）
+-- ============================================================
+
+local function _deriveKey(uid)
+    local salt = "\x9f\x2a\x7c\x11\xe3\x55\xb8\x0d\x4c\x91\xa2\x3f\x6b\xd8\x17\xee"
+    local s = tostring(uid)
+    local h = {}
+    for i = 1, 32 do h[i] = 0 end
+    local idx = 1
+    for i = 1, #salt do
+        h[idx] = bit32.bxor(h[idx], salt:byte(i)) % 256
+        idx = (idx % 32) + 1
+    end
+    for i = 1, #s do
+        h[idx] = bit32.bxor(h[idx], s:byte(i)) % 256
+        idx = (idx % 32) + 1
+    end
+    for _ = 1, 8 do
+        for i = 1, 32 do
+            local j = (i % 32) + 1
+            h[i] = bit32.bxor(h[i], bit32.lshift(h[j], 1) % 256) % 256
+        end
+    end
+    return h
+end
+
+local function _xor(data, key)
+    local out = {}
+    for i = 1, #data do
+        out[i] = string.char(bit32.bxor(data:byte(i), key[((i-1) % #key)+1]))
+    end
+    return table.concat(out)
+end
+
+local _B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+local function _b64e(data)
+    return ((data:gsub('.', function(x)
+        local r, b = '', x:byte()
+        for i = 8, 1, -1 do r = r .. (b % 2^i - b % 2^(i-1) > 0 and '1' or '0') end
+        return r
+    end) .. '0000'):gsub('%d%d%d?%d?%d?%d?', function(x)
+        if #x < 6 then return '' end
+        local c = 0
+        for i = 1, 6 do c = c + (x:sub(i,i) == '1' and 2^(6-i) or 0) end
+        return _B64:sub(c+1, c+1)
+    end) .. ({'', '==', '='})[#data % 3 + 1])
+end
+
+local function _b64d(data)
+    data = data:gsub('[^' .. _B64 .. '=]', '')
+    return (data:gsub('.', function(x)
+        if x == '=' then return '' end
+        local r, f = '', (_B64:find(x) - 1)
+        for i = 6, 1, -1 do r = r .. (f % 2^i - f % 2^(i-1) > 0 and '1' or '0') end
+        return r
+    end):gsub('%d%d%d?%d?%d?%d?%d?%d?', function(x)
+        if #x ~= 8 then return '' end
+        local c = 0
+        for i = 1, 8 do c = c + (x:sub(i,i) == '1' and 2^(8-i) or 0) end
+        return string.char(c)
+    end))
+end
+
+local function _esc(s) return (s:gsub('.', function(c) return string.format('\\x%02x', c:byte()) end)) end
+local function _unex(s) return (s:gsub('\\x(%x%x)', function(h) return string.char(tonumber(h, 16)) end)) end
+
+local function _chunk(str, seed)
+    math.randomseed(seed)
+    local out, i = {}, 1
+    while i <= #str do
+        local n = math.random(20, 45)
+        out[#out+1] = str:sub(i, i + n - 1)
+        i = i + n
+    end
+    return out
+end
+
+local function _run()
+    local key = _deriveKey(MY_USERID)
+    local xored = _xor(RAW_CODE, key)
+    local b64 = _b64e(xored)
+    local chunks = _chunk(b64, 42)
+    local double = {}
+    for i, c in ipairs(chunks) do double[i] = _b64e(c) end
+    local escaped = {}
+    for i, c in ipairs(double) do escaped[i] = _esc(c) end
+
+    local decoded_chunks = {}
+    for i, c in ipairs(escaped) do decoded_chunks[i] = _b64d(_unex(c)) end
+    local decoded = _xor(_b64d(table.concat(decoded_chunks)), key)
+
+    local fn, err = loadstring(decoded)
+    if fn then
+        local ok, e = pcall(fn)
+        if not ok then warn("[SLIM] runtime: " .. tostring(e)) end
+    else
+        warn("[SLIM] compile: " .. tostring(err))
+    end
+end
+
+_run()
