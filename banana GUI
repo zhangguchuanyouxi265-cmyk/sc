@@ -1,0 +1,320 @@
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+
+local LocalPlayer = Players.LocalPlayer
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+
+---------------------------------------------------------
+-- カラー定義
+---------------------------------------------------------
+local BG_COLOR = Color3.fromRGB(15, 15, 15)
+local PANEL_COLOR = Color3.fromRGB(22, 22, 22)
+local BORDER_COLOR = Color3.fromRGB(212, 148, 54)
+local TEXT_COLOR = Color3.fromRGB(255, 255, 255)
+local BG_TRANSPARENCY = 0.5
+
+---------------------------------------------------------
+-- スクリーンUI
+---------------------------------------------------------
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "CustomHubGui"
+screenGui.ResetOnSpawn = false
+screenGui.Parent = PlayerGui
+
+-- ドラッグ機能
+local function makeDraggable(frame)
+	local dragging, dragStart, startPos
+	frame.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = true
+			dragStart = input.Position
+			startPos = frame.Position
+			input.Changed:Connect(function()
+				if input.UserInputState == Enum.UserInputState.End then
+					dragging = false
+				end
+			end)
+		end
+	end)
+	UserInputService.InputChanged:Connect(function(input)
+		if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+			local delta = input.Position - dragStart
+			frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+		end
+	end)
+end
+
+---------------------------------------------------------
+-- メイン枠
+---------------------------------------------------------
+local mainFrame = Instance.new("Frame")
+mainFrame.Name = "MainFrame"
+mainFrame.Size = UDim2.new(0, 520, 0, 320)
+mainFrame.Position = UDim2.new(0.5, -260, 0.5, -160)
+mainFrame.BackgroundColor3 = BG_COLOR
+mainFrame.BackgroundTransparency = BG_TRANSPARENCY
+mainFrame.BorderSizePixel = 0
+mainFrame.Active = true
+mainFrame.Parent = screenGui
+
+local mainStroke = Instance.new("UIStroke")
+mainStroke.Color = BORDER_COLOR
+mainStroke.Thickness = 1.5
+mainStroke.Parent = mainFrame
+
+local mainCorner = Instance.new("UICorner")
+mainCorner.CornerRadius = UDim.new(0, 8)
+mainCorner.Parent = mainFrame
+
+makeDraggable(mainFrame)
+
+---------------------------------------------------------
+-- 色を動的に変更するための管理リスト
+---------------------------------------------------------
+local updateBorderColorFuncs = {}
+local updateTextColorFuncs = {}
+
+local function applyBorderColor(newColor)
+	BORDER_COLOR = newColor
+	mainStroke.Color = newColor
+	for _, fn in ipairs(updateBorderColorFuncs) do
+		pcall(fn, newColor)
+	end
+end
+
+local function applyTextColor(newColor)
+	for _, fn in ipairs(updateTextColorFuncs) do
+		pcall(fn, newColor)
+	end
+end
+
+---------------------------------------------------------
+-- 虹色アニメーション
+---------------------------------------------------------
+local isRainbow = true
+local rainbowConnection = nil
+
+local function startRainbow()
+	if rainbowConnection then return end
+	rainbowConnection = RunService.Heartbeat:Connect(function()
+		if not isRainbow then return end
+		local hue = (tick() * 0.5) % 1
+		local c = Color3.fromHSV(hue, 1, 1)
+		applyBorderColor(c)
+		applyTextColor(c)
+	end)
+end
+
+local function stopRainbow()
+	if rainbowConnection then
+		rainbowConnection:Disconnect()
+		rainbowConnection = nil
+	end
+end
+
+startRainbow()
+
+---------------------------------------------------------
+-- Open ボタン
+---------------------------------------------------------
+local openButton = Instance.new("TextButton")
+openButton.Name = "OpenButton"
+openButton.Size = UDim2.new(0, 36, 0, 36)
+openButton.Position = UDim2.new(0.1, 0, 0.1, 0)
+openButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+openButton.BackgroundTransparency = BG_TRANSPARENCY
+openButton.Text = "Open"
+openButton.TextColor3 = TEXT_COLOR
+openButton.TextSize = 11
+openButton.Font = Enum.Font.GothamBlack
+openButton.Visible = false
+openButton.Active = true
+openButton.Parent = screenGui
+table.insert(updateTextColorFuncs, function(c) openButton.TextColor3 = c end)
+
+local openStroke = Instance.new("UIStroke")
+openStroke.Color = BORDER_COLOR
+openStroke.Thickness = 1.5
+openStroke.Parent = openButton
+table.insert(updateBorderColorFuncs, function(c) openStroke.Color = c end)
+
+local openCorner = Instance.new("UICorner")
+openCorner.CornerRadius = UDim.new(1, 0)
+openCorner.Parent = openButton
+
+makeDraggable(openButton)
+
+---------------------------------------------------------
+-- ヘッダー部
+---------------------------------------------------------
+local headerFrame = Instance.new("Frame")
+headerFrame.Name = "HeaderFrame"
+headerFrame.Size = UDim2.new(1, 0, 0, 35)
+headerFrame.BackgroundTransparency = 1
+headerFrame.Parent = mainFrame
+
+local titleLabel = Instance.new("TextLabel")
+titleLabel.Size = UDim2.new(0, 200, 1, 0)
+titleLabel.Position = UDim2.new(0, 15, 0, 0)
+titleLabel.BackgroundTransparency = 1
+titleLabel.Text = "Banana Hub"
+titleLabel.TextColor3 = TEXT_COLOR
+titleLabel.TextSize = 20
+titleLabel.Font = Enum.Font.GothamBlack
+titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+titleLabel.Parent = headerFrame
+table.insert(updateTextColorFuncs, function(c) titleLabel.TextColor3 = c end)
+
+---------------------------------------------------------
+-- プロフィール（ヘッダー右側）
+---------------------------------------------------------
+local profileFrame = Instance.new("Frame")
+profileFrame.Name = "ProfileFrame"
+profileFrame.Size = UDim2.new(0, 140, 0, 30)
+profileFrame.Position = UDim2.new(1, -190, 0, 2.5)
+profileFrame.BackgroundTransparency = 1
+profileFrame.Parent = headerFrame
+
+local avatarImage = Instance.new("ImageLabel")
+avatarImage.Name = "AvatarImage"
+avatarImage.Size = UDim2.new(0, 26, 0, 26)
+avatarImage.Position = UDim2.new(0, 0, 0.5, -13)
+avatarImage.BackgroundColor3 = PANEL_COLOR
+avatarImage.BackgroundTransparency = BG_TRANSPARENCY
+avatarImage.Parent = profileFrame
+
+local avatarCorner = Instance.new("UICorner")
+avatarCorner.CornerRadius = UDim.new(1, 0)
+avatarCorner.Parent = avatarImage
+
+local avatarStroke = Instance.new("UIStroke")
+avatarStroke.Color = BORDER_COLOR
+avatarStroke.Thickness = 1
+avatarStroke.Parent = avatarImage
+table.insert(updateBorderColorFuncs, function(c) avatarStroke.Color = c end)
+
+task.spawn(function()
+	local content, isReady = Players:GetUserThumbnailAsync(LocalPlayer.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size100x100)
+	if isReady then
+		avatarImage.Image = content
+	end
+end)
+
+local usernameLabel = Instance.new("TextLabel")
+usernameLabel.Name = "UsernameLabel"
+usernameLabel.Size = UDim2.new(1, -32, 1, 0)
+usernameLabel.Position = UDim2.new(0, 32, 0, 0)
+usernameLabel.BackgroundTransparency = 1
+usernameLabel.Text = LocalPlayer.DisplayName
+usernameLabel.TextColor3 = TEXT_COLOR
+usernameLabel.TextSize = 13
+usernameLabel.Font = Enum.Font.GothamBlack
+usernameLabel.TextXAlignment = Enum.TextXAlignment.Left
+usernameLabel.TextTruncate = Enum.TextTruncate.AtEnd
+usernameLabel.Parent = profileFrame
+table.insert(updateTextColorFuncs, function(c) usernameLabel.TextColor3 = c end)
+
+---------------------------------------------------------
+-- 右上ボタン（× / ー）
+---------------------------------------------------------
+local closeBtn = Instance.new("TextButton")
+closeBtn.Size = UDim2.new(0, 30, 0, 25)
+closeBtn.Position = UDim2.new(1, -35, 0, 5)
+closeBtn.BackgroundColor3 = BG_COLOR
+closeBtn.BackgroundTransparency = BG_TRANSPARENCY
+closeBtn.Text = "×"
+closeBtn.TextColor3 = TEXT_COLOR
+closeBtn.TextSize = 16
+closeBtn.Font = Enum.Font.GothamBlack
+closeBtn.Parent = headerFrame
+table.insert(updateTextColorFuncs, function(c) closeBtn.TextColor3 = c end)
+
+local closeStroke = Instance.new("UIStroke")
+closeStroke.Color = BORDER_COLOR
+closeStroke.Thickness = 1
+closeStroke.Parent = closeBtn
+table.insert(updateBorderColorFuncs, function(c) closeStroke.Color = c end)
+
+local closeCorner = Instance.new("UICorner")
+closeCorner.CornerRadius = UDim.new(0, 4)
+closeCorner.Parent = closeBtn
+
+local collapseBtn = Instance.new("TextButton")
+collapseBtn.Size = UDim2.new(0, 30, 0, 25)
+collapseBtn.Position = UDim2.new(1, -70, 0, 5)
+collapseBtn.BackgroundColor3 = BG_COLOR
+collapseBtn.BackgroundTransparency = BG_TRANSPARENCY
+collapseBtn.Text = "ー"
+collapseBtn.TextColor3 = TEXT_COLOR
+collapseBtn.TextSize = 16
+collapseBtn.Font = Enum.Font.GothamBlack
+collapseBtn.Parent = headerFrame
+table.insert(updateTextColorFuncs, function(c) collapseBtn.TextColor3 = c end)
+
+local collapseStroke = Instance.new("UIStroke")
+collapseStroke.Color = BORDER_COLOR
+collapseStroke.Thickness = 1
+collapseStroke.Parent = collapseBtn
+table.insert(updateBorderColorFuncs, function(c) collapseStroke.Color = c end)
+
+local collapseCorner = Instance.new("UICorner")
+collapseCorner.CornerRadius = UDim.new(0, 4)
+collapseCorner.Parent = collapseBtn
+
+---------------------------------------------------------
+-- 折りたたみ処理
+---------------------------------------------------------
+local isCollapsed = false
+
+collapseBtn.MouseButton1Click:Connect(function()
+	isCollapsed = not isCollapsed
+	if isCollapsed then
+		titleLabel.Visible = false
+		profileFrame.Visible = false
+		headerFrame.Size = UDim2.new(1, 0, 1, 0)
+		mainFrame.Size = UDim2.new(0, 70, 0, 35)
+		collapseBtn.Text = "＋"
+	else
+		titleLabel.Visible = true
+		profileFrame.Visible = true
+		headerFrame.Size = UDim2.new(1, 0, 0, 35)
+		mainFrame.Size = UDim2.new(0, 520, 0, 320)
+		collapseBtn.Text = "ー"
+	end
+end)
+
+closeBtn.MouseButton1Click:Connect(function()
+	mainFrame.Visible = false
+	openButton.Visible = true
+end)
+
+openButton.MouseButton1Click:Connect(function()
+	mainFrame.Visible = true
+	openButton.Visible = false
+	if isCollapsed then
+		isCollapsed = false
+		titleLabel.Visible = true
+		profileFrame.Visible = true
+		headerFrame.Size = UDim2.new(1, 0, 0, 35)
+		mainFrame.Size = UDim2.new(0, 520, 0, 320)
+		collapseBtn.Text = "ー"
+	end
+end)
+
+---------------------------------------------------------
+-- 虹色 ON/OFF 切替（タイトルをクリック）
+---------------------------------------------------------
+titleLabel.Active = true
+titleLabel.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		isRainbow = not isRainbow
+		if isRainbow then
+			startRainbow()
+		else
+			stopRainbow()
+			applyBorderColor(Color3.fromRGB(212, 148, 54))
+			applyTextColor(TEXT_COLOR)
+		end
+	end
+end)
