@@ -1,0 +1,1181 @@
+--============================================================
+--  MVS2 統合パネル 完全版
+--  トリガー / サイレント / 自動発射 / 味方撃ち
+--  弾だけ壁貫通 / 全方位 / 部位 / 入力 / パッド
+--  ★壁判定強化（透明壁も含む）/ FOV円非表示
+--============================================================
+
+if _G.ZyunnsuiLoaded then warn("MVS2 は既に読み込まれています！") return end
+_G.ZyunnsuiLoaded = true
+
+repeat task.wait(.1) until game:IsLoaded() and game:GetService("Players").LocalPlayer
+
+local Players   = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UIS = game:GetService("UserInputService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local player = Players.LocalPlayer
+local camera = workspace.CurrentCamera
+
+--============================================================
+--  統合設定
+--============================================================
+local Config = {
+    SilentAim = {
+        Enabled = false, MaxDistance = 250,
+        WallCheck = true, FOVCheck = false, ForceFieldCheck = true,
+        TargetType = "Head",
+    },
+    TriggerBot = {
+        Enabled = false, Mode = "Center", ReactionDealy = 0,
+        WallCheck = true, MaxDistance = 300, FOVCheck = false,
+        ForceFieldCheck = false, CoolDown = 0.3,
+    },
+    AutoFire = {
+        Enabled = false, Mode = "Center", FireRate = 0.05,
+        MaxDistance = 400, WallCheck = true,
+        OmniDirectional = false, OmniMaxDistance = 500,
+    },
+    TeamKill     = false,
+    WallPierce   = false,
+    AimPart      = "Head",
+    InputMode    = "Auto",
+    PadButton    = "ButtonR2",
+    PadAltButton = "ButtonL2",
+    UseAltButton = false,
+}
+local SilentAimCfg  = Config.SilentAim
+local TriggerBotCfg = Config.TriggerBot
+local AutoFireCfg   = Config.AutoFire
+
+local PART_LABELS  = { Head = "頭", Torso = "胴", Foot = "足", Random = "ランダム" }
+local PART_ORDER   = { "Head", "Torso", "Foot", "Random" }
+local INPUT_LABELS = { Auto = "自動", Touch = "タッチ", PC = "PC", Console = "パッド" }
+local INPUT_ORDER  = { "Auto", "Touch", "PC", "Console" }
+local PAD_LABELS   = {
+    ButtonR2 = "R2", ButtonL2 = "L2", ButtonL3 = "Lスティック",
+    ButtonA = "A", ButtonB = "B", ButtonX = "X", ButtonY = "Y",
+}
+local PAD_ORDER    = { "ButtonR2", "ButtonL2", "ButtonL3", "ButtonA", "ButtonB", "ButtonX", "ButtonY" }
+
+--============================================================
+--  デバイス判定
+--============================================================
+local function GetDevice()
+    if UIS.TouchEnabled and not UIS.KeyboardEnabled then
+        return "Mobile"
+    elseif UIS.KeyboardEnabled then
+        return "PC"
+    elseif game:GetService("GuiService"):IsTenFootInterface() then
+        return "Console"
+    end
+    return "PC"
+end
+_G.Device = GetDevice()
+
+--==============================
+--  ゲームモード取得
+--==============================
+do
+    _G.GameMode = "Unknown"
+    local ok, ServerType = pcall(function()
+        return game.ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ServerType")
+    end)
+    if ok and ServerType then
+        pcall(function()
+            for _ = 1, 5 do
+                local gm = require(ServerType).ThisType
+                if gm and gm ~= "" then _G.GameMode = gm break end
+                task.wait(0.5)
+            end
+        end)
+    end
+end
+
+local function isEnemy(p)
+    if p == player then return false end
+    if _G.GameMode == "FreeForAll" then return true end
+    if Config.TeamKill then return true end
+    return player.Team ~= p.Team
+end
+
+--============================================================
+--  ★壁パーツ判定（強化版：透明壁も壁として認識）
+--============================================================
+-- 壁とみなす条件：
+--   1. BasePart である
+--   2. 自キャラ・他プレイヤーキャラの部位ではない
+--   3. CanCollide = true（当たり判定がある）
+--   4. Decorationという名前でない（装飾除外は任意）
+--   5. Transparency は問わない（透明壁も壁）
+--   6. サイズが極小すぎない（微小パーツノイズ除外）
+local WallIgnoreNames = {
+    ["Decoration"] = true,
+    ["Hitbox"] = true,        -- ヒットボックスは壁じゃない
+    ["HitBox"] = true,
+}
+local WallIgnoreTransparencyThreshold = 0.999  -- 完全透明(1.0)のみ除外（レーザー等）
+
+local function isWallPart(part)
+    if not part or not part:IsA("BasePart") then return false end
+    if player.Character and part:IsDescendantOf(player.Character) then return false end
+    for _, p in pairs(Players:GetPlayers()) do
+        if p.Character and part:IsDescendantOf(p.Character) then return false end
+    end
+    if WallIgnoreNames[part.Name] then return false end
+    -- ★透明壁も壁として扱う：Transparency は原則問わない
+    if part.Transparency >= WallIgnoreTransparencyThreshold then return false end
+    -- CanCollide=false は通り抜け可能なので壁じゃない
+    if not part.CanCollide then return false end
+    return true
+end
+
+--============================================================
+--  ★貫通レイキャスト（弾だけ壁貫通用）
+--============================================================
+local function pierceRaycast(origin, direction, maxDist)
+    maxDist = maxDist or 1000
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    params.IgnoreWater = true
+    params.RespectCanCollide = false  -- CanCollide=falseの壁も検出したいので
+
+    local ignoreList = {}
+    if player.Character then table.insert(ignoreList, player.Character) end
+
+    local currentOrigin = origin
+    local remaining = direction
+    local totalDist = direction.Magnitude
+    if totalDist > maxDist then
+        remaining = direction.Unit * maxDist
+        totalDist = maxDist
+    end
+
+    local travelled = 0
+    for _ = 1, 8 do
+        params.FilterDescendantsInstances = ignoreList
+        local result = workspace:Raycast(currentOrigin, remaining, params)
+        if not result then return nil end
+        local hit = result.Instance
+        travelled = travelled + (result.Position - currentOrigin).Magnitude
+        if isWallPart(hit) then
+            table.insert(ignoreList, hit)
+            currentOrigin = result.Position + remaining.Unit * 0.1
+            remaining = remaining.Unit * math.max(0, totalDist - travelled)
+            if remaining.Magnitude < 1 then return nil end
+        else
+            return result
+        end
+    end
+    return nil
+end
+
+--============================================================
+--  ★壁チェック（強化版：透明壁も遮蔽物として判定）
+--============================================================
+local function RaycastCheck(target, originPart)
+    -- 壁貫通ONなら常に射線クリア
+    if Config.WallPierce then return true end
+
+    local character = player.Character
+    if not character then return false end
+    local hrp = character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return false end
+
+    local origin = (originPart and originPart:IsA("BasePart")) and originPart.Position or hrp.Position
+    local ignore = { character }
+    local targetChar = nil
+    if typeof(target) == "Instance" then
+        targetChar = target:FindFirstAncestorOfClass("Model")
+        if targetChar and targetChar ~= character then
+            table.insert(ignore, targetChar)
+        end
+        target = target:IsA("BasePart") and target.Position or target:GetPivot().Position
+    end
+
+    local params = RaycastParams.new()
+    params.FilterDescendantsInstances = ignore
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    params.IgnoreWater = true
+    -- ★CanCollide=falseでも壁として判定したいため false
+    params.RespectCanCollide = false
+
+    local currentOrigin = origin
+    for _ = 1, 6 do
+        local dir = target - currentOrigin
+        if dir.Magnitude < 0.1 then return true end
+
+        local result = workspace:Raycast(currentOrigin, dir, params)
+        if not result then return true end
+
+        local hit = result.Instance
+        -- ★透明壁も壁として判定（Transparencyは問わない）
+        if isWallPart(hit) then
+            return false  -- 遮蔽物あり
+        else
+            -- プレイヤーキャラの部位・ヒットボックス等は無視して続行
+            table.insert(ignore, hit)
+            params.FilterDescendantsInstances = ignore
+            currentOrigin = result.Position + (dir.Unit * 0.05)
+        end
+    end
+    return false
+end
+
+local function canShoot(target)
+    if Config.WallPierce then return true end
+    return RaycastCheck(target)
+end
+
+--==============================
+--  部位取得
+--==============================
+local function getPartByType(character, partType, controller)
+    if partType == "Head" then
+        return character:FindFirstChild("Head")
+    elseif partType == "Torso" then
+        return character:FindFirstChild("UpperTorso")
+            or character:FindFirstChild("Torso")
+            or character:FindFirstChild("LowerTorso")
+    elseif partType == "Foot" then
+        return character:FindFirstChild("LeftFoot")
+            or character:FindFirstChild("RightFoot")
+            or character:FindFirstChild("LeftLowerLeg")
+            or character:FindFirstChild("RightLowerLeg")
+    elseif partType == "Random" then
+        if controller and controller.TargetPart
+           and controller.TargetPart:IsDescendantOf(character) then
+            return controller.TargetPart
+        end
+        local valid = {}
+        for _, c in ipairs(character:GetChildren()) do
+            if c:IsA("BasePart") and c.Name ~= "HumanoidRootPart" then
+                table.insert(valid, c)
+            end
+        end
+        if #valid > 0 then return valid[math.random(1, #valid)] end
+    end
+    return nil
+end
+
+--==============================
+--  ターゲット選定
+--==============================
+local function GetBestTargetPart(cfg, controller)
+    local character = player.Character
+    if not character or not character:FindFirstChild("HumanoidRootPart") then return nil end
+    local myRoot = character.HumanoidRootPart
+    local closestDist = math.huge
+    local targetPart, targetPlayer = nil, nil
+    local aimPart = cfg.TargetType or Config.AimPart
+
+    for _, p in pairs(Players:GetPlayers()) do
+        if p ~= player and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
+            if isEnemy(p) then
+                if cfg.ForceFieldCheck and p.Character:FindFirstChildOfClass("ForceField") then continue end
+                local hum = p.Character:FindFirstChildOfClass("Humanoid")
+                if hum and hum.Health > 0 then
+                    local enemyRoot = p.Character.HumanoidRootPart
+                    local dist = (myRoot.Position - enemyRoot.Position).Magnitude
+                    if dist > (cfg.MaxDistance or math.huge) then continue end
+
+                    local part = getPartByType(p.Character, aimPart, controller) or enemyRoot
+                    if not canShoot(part) then continue end
+
+                    if dist < closestDist then
+                        closestDist = dist
+                        targetPlayer = p
+                        targetPart = part
+                    end
+                end
+            end
+        end
+    end
+
+    if controller then
+        controller.LastTargetPlayer = targetPlayer
+        controller.TargetPart = targetPart
+    end
+    return targetPart, targetPlayer
+end
+
+--==============================
+--  全方位ターゲット
+--==============================
+local function GetOmniTarget(maxDist)
+    local character = player.Character
+    if not character or not character:FindFirstChild("HumanoidRootPart") then return nil end
+    local myRoot = character.HumanoidRootPart
+    local bestPart, bestPlayer, bestDist = nil, nil, math.huge
+
+    for _, p in pairs(Players:GetPlayers()) do
+        if isEnemy(p) and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
+            local hum = p.Character:FindFirstChildOfClass("Humanoid")
+            if hum and hum.Health > 0 then
+                if p.Character:FindFirstChildOfClass("ForceField") then continue end
+                local enemyRoot = p.Character.HumanoidRootPart
+                local dist = (myRoot.Position - enemyRoot.Position).Magnitude
+                if dist <= maxDist then
+                    local part = getPartByType(p.Character, Config.AimPart) or enemyRoot
+                    if canShoot(part) then
+                        if dist < bestDist then
+                            bestDist = dist
+                            bestPart = part
+                            bestPlayer = p
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return bestPart, bestPlayer
+end
+
+--============================================================
+--  モバイルパッチ
+--============================================================
+local TriggerBotController = {
+    Patched = false,
+    LastShootTime = 0,
+    ReactionTarget = nil,
+    ReactionStartTime = tick(),
+    EquipTime = 0,
+    Shooting = false,
+}
+
+local function waitForModule(path)
+    local module
+    repeat
+        task.wait(0.2)
+        pcall(function() module = require(path) end)
+    until module
+    return module
+end
+
+local function MobilePatch()
+    pcall(function()
+        local playerScripts = player:WaitForChild("PlayerScripts")
+        local playerModule = waitForModule(playerScripts:WaitForChild("PlayerModule"))
+        local controlModule = playerModule.controls or playerModule:GetActiveController()
+        local thumbstickClass = waitForModule(
+            playerScripts.PlayerModule.ControlModule:WaitForChild("DynamicThumbstick")
+        )
+
+        local targetStick
+        repeat
+            task.wait(0.5)
+            if controlModule.controllers then
+                targetStick = controlModule.controllers[thumbstickClass]
+            end
+            if not targetStick then
+                controlModule = playerModule.controls or playerModule:GetActiveController()
+            end
+        until targetStick
+
+        local originalSwitch = controlModule.SwitchToController
+        controlModule.SwitchToController = function(self, ...)
+            if ({...})[1] ~= targetStick then return end
+            return originalSwitch(self, ...)
+        end
+
+        RunService.RenderStepped:Connect(function()
+            local touchGui = player.PlayerGui:FindFirstChild("TouchGui")
+            if touchGui and touchGui:IsA("ScreenGui") and TriggerBotCfg.Enabled then
+                if not touchGui.Enabled then touchGui.Enabled = true end
+                if not targetStick.enabled then
+                    pcall(function() targetStick:Enable(true, touchGui) end)
+                end
+            end
+        end)
+
+        TriggerBotController.Patched = true
+        print("[MVS2] Mobile patch applied")
+    end)
+end
+
+if _G.Device == "Mobile" then
+    task.spawn(MobilePatch)
+else
+    TriggerBotController.Patched = true
+end
+
+player.CharacterAdded:Connect(function()
+    if _G.Device == "Mobile" then
+        pcall(function()
+            local playerModule = require(player:WaitForChild("PlayerScripts"):WaitForChild("PlayerModule"))
+            local control = playerModule.controls or playerModule:GetActiveController()
+            if control.touchJumpController then
+                control.touchJumpController:EnableButton(true)
+            end
+        end)
+    end
+end)
+
+--==============================
+--  武器装備トラッカー
+--==============================
+local function trackWeapon(char)
+    char.ChildAdded:Connect(function(child)
+        if child:IsA("Tool") and string.find(child.Name, "Gun") then
+            TriggerBotController.EquipTime = tick()
+        end
+    end)
+    char.ChildRemoved:Connect(function(child)
+        if child:IsA("Tool") and string.find(child.Name, "Gun") then
+            TriggerBotController.EquipTime = 0
+        end
+    end)
+end
+if player.Character then trackWeapon(player.Character) end
+player.CharacterAdded:Connect(trackWeapon)
+
+--============================================================
+--  SilentAim（壁チェック強化）
+--============================================================
+local silentController = { TargetPart = nil }
+
+local function tryHookSilentAim()
+    if type(hookfunction) ~= "function" then
+        warn("[MVS2] hookfunction 未対応: サイレント無効")
+        return false
+    end
+    local ok, CombatClient = pcall(function()
+        return require(game.ReplicatedStorage.Client.Madwork.CombatClient)
+    end)
+    if not ok or not CombatClient then
+        warn("[MVS2] CombatClient 取得失敗: サイレント無効")
+        return false
+    end
+
+    task.spawn(function()
+        while true do
+            task.wait(0.1)
+            silentController.TargetPart = GetBestTargetPart(SilentAimCfg, nil)
+        end
+    end)
+
+    local oldNewLocalEvent
+    oldNewLocalEvent = hookfunction(CombatClient.NewLocalEvent, function(data)
+        local character = player.Character
+        local hrp = character and character:FindFirstChild("HumanoidRootPart")
+        if not character or not hrp then return oldNewLocalEvent(data) end
+
+        if (SilentAimCfg.Enabled or Config.WallPierce)
+           and silentController.TargetPart and data and typeof(data) == "table" then
+            local targetPart = silentController.TargetPart
+            -- ★壁チェック：透明壁も含めて確認
+            if not Config.WallPierce and SilentAimCfg.WallCheck then
+                if not RaycastCheck(targetPart, nil) then
+                    return oldNewLocalEvent(data)
+                end
+            end
+            local myPos = hrp.Position
+            data.Position  = myPos
+            data.Direction = (targetPart.Position - myPos).Unit
+        end
+        return oldNewLocalEvent(data)
+    end)
+    return true
+end
+tryHookSilentAim()
+
+--==============================
+--  入力方式
+--==============================
+local function detectDefaultMode()
+    if UIS.TouchEnabled and not UIS.KeyboardEnabled then return "Touch" end
+    if UIS.GamepadEnabled and not UIS.KeyboardEnabled then return "Console" end
+    return "PC"
+end
+
+local function resolveMode()
+    local m = Config.InputMode
+    if m == "Auto" then return detectDefaultMode() end
+    return m
+end
+
+--==============================
+--  発射ヘルパー
+--==============================
+local holdingMain, holdingAlt = false, false
+
+local function getKeyCode(name)
+    return Enum.KeyCode[name] or Enum.KeyCode.ButtonR2
+end
+
+local function fireDown(useAlt)
+    local mode = resolveMode()
+    local vp = camera.ViewportSize
+    local x, y = vp.X / 2, vp.Y / 2
+
+    if mode == "PC" then
+        pcall(function()
+            VirtualInputManager:SendMouseButtonEvent(x, y, 0, true, game, 1)
+        end)
+        holdingMain = true
+    elseif mode == "Console" then
+        local btnName = useAlt and Config.PadAltButton or Config.PadButton
+        local code = getKeyCode(btnName)
+        pcall(function()
+            VirtualInputManager:SendKeyEvent(true, code, false, game)
+        end)
+        if useAlt then holdingAlt = true else holdingMain = true end
+    else
+        pcall(function()
+            VirtualInputManager:SendTouchEvent(x, y, true)
+        end)
+        pcall(function()
+            VirtualInputManager:SendMouseButtonEvent(x, y, 0, true, game, 1)
+        end)
+        holdingMain = true
+    end
+end
+
+local function fireUp(useAlt)
+    local mode = resolveMode()
+    local vp = camera.ViewportSize
+    local x, y = vp.X / 2, vp.Y / 2
+
+    if mode == "PC" then
+        pcall(function()
+            VirtualInputManager:SendMouseButtonEvent(x, y, 0, false, game, 1)
+        end)
+        holdingMain = false
+    elseif mode == "Console" then
+        local btnName = useAlt and Config.PadAltButton or Config.PadButton
+        local code = getKeyCode(btnName)
+        pcall(function()
+            VirtualInputManager:SendKeyEvent(false, code, false, game)
+        end)
+        if useAlt then holdingAlt = false else holdingMain = false end
+    else
+        pcall(function()
+            VirtualInputManager:SendTouchEvent(x, y, false)
+        end)
+        pcall(function()
+            VirtualInputManager:SendMouseButtonEvent(x, y, 0, false, game, 1)
+        end)
+        holdingMain = false
+    end
+end
+
+local function fireReleaseAll()
+    if holdingMain then fireUp(false) end
+    if holdingAlt  then fireUp(true)  end
+end
+
+local function fireTap()
+    fireDown(false)
+    task.wait(0.02)
+    fireUp(false)
+end
+
+--============================================================
+--  TriggerBot 本体
+--============================================================
+RunService.Heartbeat:Connect(function()
+    if not TriggerBotController.Patched then return end
+    if not TriggerBotCfg.Enabled then return end
+    if (tick() - TriggerBotController.LastShootTime) < TriggerBotCfg.CoolDown then return end
+
+    local char = player.Character
+    local tool = char and char:FindFirstChildOfClass("Tool")
+    local holdingGun = tool and string.find(tool.Name, "Gun")
+        and ((tick() - TriggerBotController.EquipTime) >= 0.5)
+    if not holdingGun then return end
+
+    local target = nil
+
+    if TriggerBotCfg.Mode == "Center" then
+        local center = Vector2.new(camera.ViewportSize.X / 2, camera.ViewportSize.Y / 2)
+        local ray = camera:ViewportPointToRay(center.X, center.Y)
+
+        local result
+        if Config.WallPierce then
+            result = pierceRaycast(ray.Origin, ray.Direction * 5000, 5000)
+        else
+            result = workspace:Raycast(ray.Origin, ray.Direction * 1000)
+        end
+
+        if result and result.Instance then
+            local model = result.Instance:FindFirstAncestorOfClass("Model")
+            if model and model:FindFirstChild("Humanoid") and model ~= char then
+                local plr = Players:GetPlayerFromCharacter(model)
+                if (not plr) or isEnemy(plr) then
+                    local root = model:FindFirstChild("HumanoidRootPart")
+                    -- ★壁チェック：透明壁含めて確認
+                    if root and canShoot(root) then
+                        target = model
+                    end
+                end
+            end
+        end
+
+    elseif TriggerBotCfg.Mode == "Visible" then
+        local _, targetPlr = GetBestTargetPart(TriggerBotCfg, nil)
+        if targetPlr and targetPlr.Character then
+            target = targetPlr.Character
+        end
+    end
+
+    if target then
+        if target ~= TriggerBotController.ReactionTarget then
+            TriggerBotController.ReactionTarget = target
+            TriggerBotController.ReactionStartTime = tick()
+        end
+
+        local delaySec = TriggerBotCfg.ReactionDealy / 10
+        if (tick() - TriggerBotController.ReactionStartTime) >= delaySec then
+            TriggerBotController.Shooting = true
+            fireTap()
+            TriggerBotController.LastShootTime  = tick()
+            TriggerBotController.ReactionTarget = nil
+            TriggerBotController.Shooting = false
+        end
+    else
+        TriggerBotController.ReactionTarget = nil
+    end
+end)
+
+--==============================
+--  AutoFire
+--==============================
+local AutoFireController = { LastFire = 0, AltToggle = false }
+
+local function GetAutoFireTarget()
+    if AutoFireCfg.OmniDirectional then
+        local part, plr = GetOmniTarget(AutoFireCfg.OmniMaxDistance)
+        if part and plr and plr.Character then
+            return plr.Character, part
+        end
+        return nil
+    end
+
+    if AutoFireCfg.Mode == "Center" then
+        local vc = Vector2.new(camera.ViewportSize.X / 2, camera.ViewportSize.Y / 2)
+        local ray = camera:ViewportPointToRay(vc.X, vc.Y)
+        local res
+        if Config.WallPierce then
+            res = pierceRaycast(ray.Origin, ray.Direction * 5000, 5000)
+        else
+            res = workspace:Raycast(ray.Origin, ray.Direction * (AutoFireCfg.MaxDistance or 400))
+        end
+        if res and res.Instance then
+            local model = res.Instance:FindFirstAncestorOfClass("Model")
+            if model and model ~= player.Character and model:FindFirstChild("Humanoid") then
+                local plr = Players:GetPlayerFromCharacter(model)
+                if (not plr) or isEnemy(plr) then
+                    local root = model:FindFirstChild("HumanoidRootPart")
+                    if root and canShoot(root) then
+                        return model
+                    end
+                end
+            end
+        end
+    elseif AutoFireCfg.Mode == "Visible" then
+        local _, targetPlr = GetBestTargetPart({
+            MaxDistance = AutoFireCfg.MaxDistance,
+            WallCheck = AutoFireCfg.WallCheck, FOVCheck = false,
+            ForceFieldCheck = true, TargetType = Config.AimPart,
+        }, nil)
+        if targetPlr and targetPlr.Character then
+            local root = targetPlr.Character:FindFirstChild("HumanoidRootPart")
+            if root and canShoot(root) then
+                return targetPlr.Character
+            end
+        end
+    end
+    return nil
+end
+
+RunService.Heartbeat:Connect(function()
+    if not AutoFireCfg.Enabled then
+        fireReleaseAll()
+        return
+    end
+    if (tick() - AutoFireController.LastFire) < AutoFireCfg.FireRate then return end
+
+    local char = player.Character
+    local tool = char and char:FindFirstChildOfClass("Tool")
+    if not tool then
+        fireReleaseAll()
+        return
+    end
+
+    local target = GetAutoFireTarget()
+    if not target then
+        fireReleaseAll()
+        return
+    end
+
+    local mode = resolveMode()
+
+    if mode == "PC" or mode == "Console" then
+        if mode == "Console" and Config.UseAltButton then
+            AutoFireController.AltToggle = not AutoFireController.AltToggle
+            if AutoFireController.AltToggle then
+                if holdingMain then fireUp(false) end
+                if holdingAlt  then fireUp(true)  end
+                fireDown(false)
+            else
+                if holdingMain then fireUp(false) end
+                if holdingAlt  then fireUp(true)  end
+                fireDown(true)
+            end
+        else
+            if not holdingMain then
+                fireDown(false)
+            else
+                fireUp(false)
+                task.wait(0.005)
+                fireDown(false)
+            end
+        end
+    else
+        fireTap()
+    end
+
+    AutoFireController.LastFire = tick()
+end)
+
+--============================================================
+--  UI（FOV円ボタン削除）
+--============================================================
+local CG = game:GetService("CoreGui")
+local oldUI = CG:FindFirstChild("MVS2_Panel")
+if oldUI then oldUI:Destroy() end
+
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "MVS2_Panel"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+pcall(function() ScreenGui.Parent = CG end)
+if not ScreenGui.Parent then ScreenGui.Parent = player:WaitForChild("PlayerGui") end
+
+local Main = Instance.new("Frame")
+Main.Name = "Main"
+Main.Size = UDim2.new(0, 200, 0, 36)
+Main.Position = UDim2.new(0, 20, 0, 100)
+Main.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
+Main.BorderSizePixel = 0
+Main.Active = true
+Main.ClipsDescendants = true
+Main.Parent = ScreenGui
+
+local UICorner = Instance.new("UICorner")
+UICorner.CornerRadius = UDim.new(0, 8)
+UICorner.Parent = Main
+
+local Stroke = Instance.new("UIStroke")
+Stroke.Color = Color3.fromRGB(202, 65, 156)
+Stroke.Thickness = 1.5
+Stroke.Parent = Main
+
+local Header = Instance.new("Frame")
+Header.Size = UDim2.new(1, 0, 0, 36)
+Header.BackgroundTransparency = 1
+Header.Parent = Main
+
+local Title = Instance.new("TextLabel")
+Title.Size = UDim2.new(1, -70, 1, 0)
+Title.Position = UDim2.new(0, 8, 0, 0)
+Title.BackgroundTransparency = 1
+Title.Text = "MVS2 パネル"
+Title.TextColor3 = Color3.fromRGB(255, 255, 255)
+Title.Font = Enum.Font.GothamBold
+Title.TextSize = 13
+Title.TextXAlignment = Enum.TextXAlignment.Left
+Title.Parent = Header
+
+local btnToggle = Instance.new("TextButton")
+btnToggle.Size = UDim2.new(0, 24, 0, 24)
+btnToggle.Position = UDim2.new(1, -56, 0, 6)
+btnToggle.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
+btnToggle.BorderSizePixel = 0
+btnToggle.Text = "▼"
+btnToggle.TextColor3 = Color3.fromRGB(255, 255, 255)
+btnToggle.Font = Enum.Font.GothamBold
+btnToggle.TextSize = 12
+btnToggle.Parent = Header
+local bTCorner = Instance.new("UICorner")
+bTCorner.CornerRadius = UDim.new(0, 4)
+bTCorner.Parent = btnToggle
+
+local btnClose = Instance.new("TextButton")
+btnClose.Size = UDim2.new(0, 24, 0, 24)
+btnClose.Position = UDim2.new(1, -28, 0, 6)
+btnClose.BackgroundColor3 = Color3.fromRGB(200, 70, 70)
+btnClose.BorderSizePixel = 0
+btnClose.Text = "✕"
+btnClose.TextColor3 = Color3.fromRGB(255, 255, 255)
+btnClose.Font = Enum.Font.GothamBold
+btnClose.TextSize = 12
+btnClose.Parent = Header
+local cC = Instance.new("UICorner")
+cC.CornerRadius = UDim.new(0, 4)
+cC.Parent = btnClose
+btnClose.MouseButton1Click:Connect(function() ScreenGui:Destroy() end)
+
+local Content = Instance.new("ScrollingFrame")
+Content.Name = "Content"
+Content.Size = UDim2.new(1, 0, 1, -36)
+Content.Position = UDim2.new(0, 0, 0, 36)
+Content.BackgroundTransparency = 1
+Content.Visible = false
+Content.BorderSizePixel = 0
+Content.ScrollBarThickness = 4
+Content.ScrollBarImageColor3 = Color3.fromRGB(202, 65, 156)
+Content.CanvasSize = UDim2.new(0, 0, 0, 270)
+Content.ScrollingDirection = Enum.ScrollingDirection.Y
+Content.ScrollBarImageTransparency = 0.3
+Content.Parent = Main
+
+local function makeToggle(jpLabel, yPos, xPos, getState, setState, onColor)
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(0, 90, 0, 30)
+    btn.Position = UDim2.new(0, xPos, 0, yPos)
+    btn.BackgroundColor3 = getState() and (onColor or Color3.fromRGB(80, 200, 120)) or Color3.fromRGB(50, 50, 60)
+    btn.BorderSizePixel = 0
+    btn.Text = jpLabel .. "：" .. (getState() and "ON" or "OFF")
+    btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    btn.Font = Enum.Font.GothamBold
+    btn.TextSize = 11
+    btn.Parent = Content
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, 6)
+    c.Parent = btn
+
+    btn.MouseButton1Click:Connect(function()
+        setState(not getState())
+        local st = getState()
+        btn.Text = jpLabel .. "：" .. (st and "ON" or "OFF")
+        btn.BackgroundColor3 = st and (onColor or Color3.fromRGB(80, 200, 120)) or Color3.fromRGB(50, 50, 60)
+    end)
+    return btn
+end
+
+local function cfgToggle(tableRef)
+    return
+        function() return tableRef.Enabled end,
+        function(v) tableRef.Enabled = v end
+end
+
+-- 1行目：トリガー / サイレント
+local gT, sT = cfgToggle(TriggerBotCfg)
+makeToggle("トリガー", 6, 8, gT, sT)
+local gS, sS = cfgToggle(SilentAimCfg)
+makeToggle("サイレント", 6, 105, gS, sS)
+
+-- 2行目：自動発射 / 壁貫通
+local gA, sA = cfgToggle(AutoFireCfg)
+makeToggle("自動発射", 42, 8, gA, sA)
+makeToggle("壁貫通", 42, 105,
+    function() return Config.WallPierce end,
+    function(v) Config.WallPierce = v end,
+    Color3.fromRGB(220, 80, 80)
+)
+
+-- 3行目：味方撃ち / 全方位
+makeToggle("味方撃ち", 78, 8,
+    function() return Config.TeamKill end,
+    function(v) Config.TeamKill = v end
+)
+makeToggle("全方位", 78, 105,
+    function() return AutoFireCfg.OmniDirectional end,
+    function(v) AutoFireCfg.OmniDirectional = v end,
+    Color3.fromRGB(255, 180, 80)
+)
+
+-- 4行目：部位 / 入力
+local btnPart = Instance.new("TextButton")
+btnPart.Size = UDim2.new(0, 90, 0, 30)
+btnPart.Position = UDim2.new(0, 8, 0, 114)
+btnPart.BackgroundColor3 = Color3.fromRGB(90, 130, 200)
+btnPart.BorderSizePixel = 0
+btnPart.Text = "部位：" .. PART_LABELS[Config.AimPart]
+btnPart.TextColor3 = Color3.fromRGB(255, 255, 255)
+btnPart.Font = Enum.Font.GothamBold
+btnPart.TextSize = 11
+btnPart.Parent = Content
+local bPC = Instance.new("UICorner")
+bPC.CornerRadius = UDim.new(0, 6)
+bPC.Parent = btnPart
+
+btnPart.MouseButton1Click:Connect(function()
+    local current = Config.AimPart
+    local idx = 1
+    for i, v in ipairs(PART_ORDER) do
+        if v == current then idx = i break end
+    end
+    idx = idx % #PART_ORDER + 1
+    Config.AimPart = PART_ORDER[idx]
+    SilentAimCfg.TargetType = Config.AimPart
+    btnPart.Text = "部位：" .. PART_LABELS[Config.AimPart]
+end)
+
+local btnInput = Instance.new("TextButton")
+btnInput.Size = UDim2.new(0, 90, 0, 30)
+btnInput.Position = UDim2.new(0, 105, 0, 114)
+btnInput.BackgroundColor3 = Color3.fromRGB(180, 130, 60)
+btnInput.BorderSizePixel = 0
+btnInput.Text = "入力：" .. INPUT_LABELS[Config.InputMode]
+btnInput.TextColor3 = Color3.fromRGB(255, 255, 255)
+btnInput.Font = Enum.Font.GothamBold
+btnInput.TextSize = 11
+btnInput.Parent = Content
+local bIC = Instance.new("UICorner")
+bIC.CornerRadius = UDim.new(0, 6)
+bIC.Parent = btnInput
+
+btnInput.MouseButton1Click:Connect(function()
+    local current = Config.InputMode
+    local idx = 1
+    for i, v in ipairs(INPUT_ORDER) do
+        if v == current then idx = i break end
+    end
+    idx = idx % #INPUT_ORDER + 1
+    Config.InputMode = INPUT_ORDER[idx]
+    btnInput.Text = "入力：" .. INPUT_LABELS[Config.InputMode]
+end)
+
+-- 5行目：パッド / 照準
+local btnPad = Instance.new("TextButton")
+btnPad.Size = UDim2.new(0, 90, 0, 30)
+btnPad.Position = UDim2.new(0, 8, 0, 150)
+btnPad.BackgroundColor3 = Color3.fromRGB(120, 180, 255)
+btnPad.BorderSizePixel = 0
+btnPad.Text = "パッド：" .. (PAD_LABELS[Config.PadButton] or Config.PadButton)
+btnPad.TextColor3 = Color3.fromRGB(255, 255, 255)
+btnPad.Font = Enum.Font.GothamBold
+btnPad.TextSize = 11
+btnPad.Parent = Content
+local bPadC = Instance.new("UICorner")
+bPadC.CornerRadius = UDim.new(0, 6)
+bPadC.Parent = btnPad
+
+btnPad.MouseButton1Click:Connect(function()
+    local current = Config.PadButton
+    local idx = 1
+    for i, v in ipairs(PAD_ORDER) do
+        if v == current then idx = i break end
+    end
+    idx = idx % #PAD_ORDER + 1
+    Config.PadButton = PAD_ORDER[idx]
+    btnPad.Text = "パッド：" .. (PAD_LABELS[Config.PadButton] or Config.PadButton)
+end)
+
+local btnMode = Instance.new("TextButton")
+btnMode.Size = UDim2.new(0, 90, 0, 30)
+btnMode.Position = UDim2.new(0, 105, 0, 150)
+btnMode.BackgroundColor3 = Color3.fromRGB(120, 90, 180)
+btnMode.BorderSizePixel = 0
+btnMode.Text = "照準：" .. (TriggerBotCfg.Mode == "Center" and "中央" or "可視")
+btnMode.TextColor3 = Color3.fromRGB(255, 255, 255)
+btnMode.Font = Enum.Font.GothamBold
+btnMode.TextSize = 11
+btnMode.Parent = Content
+local bMC = Instance.new("UICorner")
+bMC.CornerRadius = UDim.new(0, 6)
+bMC.Parent = btnMode
+
+btnMode.MouseButton1Click:Connect(function()
+    if TriggerBotCfg.Mode == "Center" then
+        TriggerBotCfg.Mode = "Visible"
+        AutoFireCfg.Mode = "Visible"
+        btnMode.Text = "照準：可視"
+    else
+        TriggerBotCfg.Mode = "Center"
+        AutoFireCfg.Mode = "Center"
+        btnMode.Text = "照準：中央"
+    end
+end)
+
+-- 6行目：交互押し / スクリプト
+makeToggle("交互押し", 186, 8,
+    function() return Config.UseAltButton end,
+    function(v) Config.UseAltButton = v end,
+    Color3.fromRGB(255, 180, 80)
+)
+
+local btnScript = Instance.new("TextButton")
+btnScript.Size = UDim2.new(0, 90, 0, 30)
+btnScript.Position = UDim2.new(0, 105, 0, 186)
+btnScript.BackgroundColor3 = Color3.fromRGB(202, 65, 156)
+btnScript.BorderSizePixel = 0
+btnScript.Text = "スクリプト ▸"
+btnScript.TextColor3 = Color3.fromRGB(255, 255, 255)
+btnScript.Font = Enum.Font.GothamBold
+btnScript.TextSize = 11
+btnScript.Parent = Content
+local bSC = Instance.new("UICorner")
+bSC.CornerRadius = UDim.new(0, 6)
+bSC.Parent = btnScript
+
+Content.CanvasSize = UDim2.new(0, 0, 0, 226)
+
+--==============================
+--  スクリプト入力ウィンドウ
+--==============================
+local ScriptWindow = Instance.new("Frame")
+ScriptWindow.Size = UDim2.new(0, 300, 0, 210)
+ScriptWindow.Position = UDim2.new(0, 230, 0, 100)
+ScriptWindow.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
+ScriptWindow.BorderSizePixel = 0
+ScriptWindow.Visible = false
+ScriptWindow.Active = true
+ScriptWindow.Draggable = true
+ScriptWindow.Parent = ScreenGui
+
+local SWCorner = Instance.new("UICorner")
+SWCorner.CornerRadius = UDim.new(0, 8)
+SWCorner.Parent = ScriptWindow
+local SWStroke = Instance.new("UIStroke")
+SWStroke.Color = Color3.fromRGB(202, 65, 156)
+SWStroke.Parent = ScriptWindow
+
+local SWTitle = Instance.new("TextLabel")
+SWTitle.Size = UDim2.new(1, -70, 0, 26)
+SWTitle.Position = UDim2.new(0, 8, 0, 0)
+SWTitle.BackgroundTransparency = 1
+SWTitle.Text = "スクリプト"
+SWTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
+SWTitle.Font = Enum.Font.GothamBold
+SWTitle.TextSize = 12
+SWTitle.TextXAlignment = Enum.TextXAlignment.Left
+SWTitle.Parent = ScriptWindow
+
+local SWClose = Instance.new("TextButton")
+SWClose.Size = UDim2.new(0, 22, 0, 22)
+SWClose.Position = UDim2.new(1, -26, 0, 2)
+SWClose.BackgroundColor3 = Color3.fromRGB(200, 70, 70)
+SWClose.BorderSizePixel = 0
+SWClose.Text = "✕"
+SWClose.TextColor3 = Color3.fromRGB(255, 255, 255)
+SWClose.Font = Enum.Font.GothamBold
+SWClose.TextSize = 11
+SWClose.Parent = ScriptWindow
+local SWCC = Instance.new("UICorner")
+SWCC.CornerRadius = UDim.new(0, 4)
+SWCC.Parent = SWClose
+SWClose.MouseButton1Click:Connect(function() ScriptWindow.Visible = false end)
+
+local ScriptBox = Instance.new("TextBox")
+ScriptBox.Size = UDim2.new(1, -16, 1, -70)
+ScriptBox.Position = UDim2.new(0, 8, 0, 30)
+ScriptBox.BackgroundColor3 = Color3.fromRGB(12, 12, 15)
+ScriptBox.BorderSizePixel = 0
+ScriptBox.Text = "-- ここにスクリプトを書いてください"
+ScriptBox.PlaceholderText = "スクリプトを入力..."
+ScriptBox.TextColor3 = Color3.fromRGB(220, 220, 220)
+ScriptBox.Font = Enum.Font.Code
+ScriptBox.TextSize = 12
+ScriptBox.TextXAlignment = Enum.TextXAlignment.Left
+ScriptBox.TextYAlignment = Enum.TextYAlignment.Top
+ScriptBox.MultiLine = true
+ScriptBox.ClearTextOnFocus = false
+ScriptBox.TextWrapped = true
+ScriptBox.Parent = ScriptWindow
+local SBCorner = Instance.new("UICorner")
+SBCorner.CornerRadius = UDim.new(0, 4)
+SBCorner.Parent = ScriptBox
+
+local SBRun = Instance.new("TextButton")
+SBRun.Size = UDim2.new(0, 130, 0, 26)
+SBRun.Position = UDim2.new(0, 8, 1, -34)
+SBRun.BackgroundColor3 = Color3.fromRGB(80, 200, 120)
+SBRun.BorderSizePixel = 0
+SBRun.Text = "▶ 実行"
+SBRun.TextColor3 = Color3.fromRGB(255, 255, 255)
+SBRun.Font = Enum.Font.GothamBold
+SBRun.TextSize = 12
+SBRun.Parent = ScriptWindow
+local SBRunC = Instance.new("UICorner")
+SBRunC.CornerRadius = UDim.new(0, 4)
+SBRunC.Parent = SBRun
+SBRun.MouseButton1Click:Connect(function()
+    local fn, err = loadstring(ScriptBox.Text)
+    if not fn then warn("[エラー] " .. tostring(err)) return end
+    local ok, runErr = pcall(fn)
+    if not ok then warn("[実行エラー] " .. tostring(runErr)) end
+end)
+
+local SBClear = Instance.new("TextButton")
+SBClear.Size = UDim2.new(0, 130, 0, 26)
+SBClear.Position = UDim2.new(1, -138, 1, -34)
+SBClear.BackgroundColor3 = Color3.fromRGB(200, 70, 70)
+SBClear.BorderSizePixel = 0
+SBClear.Text = "✕ クリア"
+SBClear.TextColor3 = Color3.fromRGB(255, 255, 255)
+SBClear.Font = Enum.Font.GothamBold
+SBClear.TextSize = 12
+SBClear.Parent = ScriptWindow
+local SBClearC = Instance.new("UICorner")
+SBClearC.CornerRadius = UDim.new(0, 4)
+SBClearC.Parent = SBClear
+SBClear.MouseButton1Click:Connect(function() ScriptBox.Text = "" end)
+
+btnScript.MouseButton1Click:Connect(function()
+    ScriptWindow.Visible = not ScriptWindow.Visible
+end)
+
+--==============================
+--  折りたたみ
+--==============================
+local expanded = false
+local function setExpanded(state)
+    expanded = state
+    if state then
+        local maxH = math.min(camera.ViewportSize.Y * 0.75, 340)
+        Main.Size = UDim2.new(0, 200, 0, maxH)
+        Content.Visible = true
+        btnToggle.Text = "▲"
+    else
+        Main.Size = UDim2.new(0, 200, 0, 36)
+        Content.Visible = false
+        btnToggle.Text = "▼"
+    end
+end
+btnToggle.MouseButton1Click:Connect(function() setExpanded(not expanded) end)
+
+--==============================
+--  ドラッグ
+--==============================
+do
+    local dragging, dragStart, startPos
+    local function startDrag(input)
+        dragging = true
+        dragStart = input.Position
+        startPos = Main.Position
+    end
+    local function updateDrag(input)
+        if not dragging then return end
+        local d = input.Position - dragStart
+        local newX = startPos.X.Offset + d.X
+        local newY = startPos.Y.Offset + d.Y
+        local maxY = camera.ViewportSize.Y - Main.AbsoluteSize.Y
+        local maxX = camera.ViewportSize.X - Main.AbsoluteSize.X
+        newY = math.clamp(newY, 0, math.max(0, maxY))
+        newX = math.clamp(newX, 0, math.max(0, maxX))
+        Main.Position = UDim2.new(0, newX, 0, newY)
+    end
+    Header.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+           or input.UserInputType == Enum.UserInputType.Touch then
+            startDrag(input)
+        end
+    end)
+    UIS.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement
+           or input.UserInputType == Enum.UserInputType.Touch then
+            updateDrag(input)
+        end
+    end)
+    UIS.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+           or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = false
+        end
+    end)
+end
+
+print("[MVS2 統合パネル] 壁判定強化版 読み込み完了 / デバイス: " .. tostring(_G.Device))
