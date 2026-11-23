@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>HttpGet ラッパー作成ツール</title>
+  <style>
+    :root {
+      --bg: #0b0f17;
+      --card: #131a26;
+      --card-2: #1a2436;
+      --text: #eef2f7;
+      --muted: #94a3b8;
+      --accent: #38bdf8;
+      --accent-2: #22c55e;
+      --border: rgba(255, 255, 255, 0.1);
+      --danger: #f87171;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Hiragino Sans", "Noto Sans JP", sans-serif;
+      background: radial-gradient(circle at top, #152238 0%, var(--bg) 60%);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 20px 14px 48px;
+      line-height: 1.5;
+    }
+
+    .container {
+      max-width: 720px;
+      margin: 0 auto;
+    }
+
+    .header {
+      margin-bottom: 18px;
+    }
+
+    .header h1 {
+      font-size: 1.35rem;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+    }
+
+    .header p {
+      font-size: 0.88rem;
+      color: var(--muted);
+      margin-top: 4px;
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 16px;
+      margin-bottom: 14px;
+      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.28);
+    }
+
+    .label-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+      flex-wrap: wrap;
+    }
+
+    label {
+      font-size: 0.92rem;
+      font-weight: 700;
+    }
+
+    .badge {
+      font-size: 0.75rem;
+      color: var(--accent);
+      background: rgba(56, 189, 248, 0.12);
+      border: 1px solid rgba(56, 189, 248, 0.25);
+      padding: 2px 8px;
+      border-radius: 999px;
+    }
+
+    input[type="text"],
+    textarea {
+      width: 100%;
+      background: var(--bg);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.9rem;
+      outline: none;
+      transition: border-color 0.15s ease;
+    }
+
+    input[type="text"]:focus,
+    textarea:focus {
+      border-color: var(--accent);
+    }
+
+    textarea.input-box {
+      min-height: 92px;
+      resize: vertical;
+    }
+
+    textarea.output-box {
+      min-height: 110px;
+      resize: vertical;
+      background: #070a10;
+      color: #7dd3fc;
+    }
+
+    .options {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 10px;
+    }
+
+    .check {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.84rem;
+      color: var(--muted);
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .check input {
+      accent-color: var(--accent);
+      width: 16px;
+      height: 16px;
+    }
+
+    .btn-row {
+      display: flex;
+      gap: 10px;
+      margin-top: 12px;
+      flex-wrap: wrap;
+    }
+
+    button {
+      border: none;
+      border-radius: 12px;
+      padding: 11px 16px;
+      font-size: 0.92rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: transform 0.08s ease, opacity 0.15s ease, background 0.15s ease;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+
+    button:active {
+      transform: scale(0.98);
+    }
+
+    .btn-copy {
+      background: var(--accent);
+      color: #06131e;
+      flex: 1 1 180px;
+    }
+
+    .btn-copy.copied {
+      background: var(--accent-2);
+      color: #052e16;
+    }
+
+    .btn-secondary {
+      background: var(--card-2);
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+
+    .btn-danger {
+      background: rgba(248, 113, 113, 0.12);
+      color: var(--danger);
+      border: 1px solid rgba(248, 113, 113, 0.25);
+    }
+
+    .hint {
+      font-size: 0.78rem;
+      color: var(--muted);
+      margin-top: 8px;
+    }
+
+    .toast {
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%) translateY(20px);
+      background: var(--accent-2);
+      color: #052e16;
+      font-weight: 800;
+      font-size: 0.88rem;
+      padding: 10px 18px;
+      border-radius: 999px;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s ease, transform 0.2s ease;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.35);
+      z-index: 99;
+    }
+
+    .toast.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>loadstring HttpGet ラッパー作成</h1>
+      <p>入れたURLやスクリプトを自動で <code>loadstring(game:HttpGet("..."))()</code> に囲ってコピーできます。</p>
+    </div>
+
+    <div class="card">
+      <div class="label-row">
+        <label for="scriptInput">1. ここに script（またはURL）を入れる</label>
+        <span class="badge">リアルタイム反映</span>
+      </div>
+      <textarea
+        id="scriptInput"
+        class="input-box"
+        placeholder="例: https://raw.githubusercontent.com/.../script.lua"
+        spellcheck="false"
+      ></textarea>
+
+      <div class="options">
+        <label class="check">
+          <input type="checkbox" id="trimToggle" checked />
+          前後の余分な空白・改行を自動で消す
+        </label>
+        <label class="check">
+          <input type="checkbox" id="escapeQuoteToggle" checked />
+          中身に <code>"</code> があれば <code>\"</code> に変換する
+        </label>
+      </div>
+
+      <div class="btn-row">
+        <button type="button" class="btn-secondary" id="pasteBtn">貼り付け</button>
+        <button type="button" class="btn-danger" id="clearBtn">クリア</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="label-row">
+        <label for="outputBox">2. 囲われたコード（そのままコピー）</label>
+        <span class="badge" id="charCount">0 文字</span>
+      </div>
+      <textarea
+        id="outputBox"
+        class="output-box"
+        readonly
+        spellcheck="false"
+      ></textarea>
+
+      <div class="btn-row">
+        <button type="button" class="btn-copy" id="copyBtn">コピーする</button>
+      </div>
+      <p class="hint">※ スマホや一部ブラウザで「貼り付け」ボタンが使えない場合は、入力欄を長押しして貼り付けてください。</p>
+    </div>
+  </div>
+
+  <div class="toast" id="toast">コピーしました！</div>
+
+  <script>
+    const scriptInput = document.getElementById("scriptInput");
+    const outputBox = document.getElementById("outputBox");
+    const copyBtn = document.getElementById("copyBtn");
+    const pasteBtn = document.getElementById("pasteBtn");
+    const clearBtn = document.getElementById("clearBtn");
+    const trimToggle = document.getElementById("trimToggle");
+    const escapeQuoteToggle = document.getElementById("escapeQuoteToggle");
+    const charCount = document.getElementById("charCount");
+    const toast = document.getElementById("toast");
+
+    function showToast(message) {
+      toast.textContent = message;
+      toast.classList.add("show");
+      setTimeout(() => {
+        toast.classList.remove("show");
+      }, 1600);
+    }
+
+    function buildWrappedCode() {
+      let raw = scriptInput.value;
+      if (trimToggle.checked) {
+        raw = raw.trim();
+      }
+      if (escapeQuoteToggle.checked) {
+        // すでに \" になっている箇所を二重エスケープしないよう調整
+        raw = raw.replace(/\\"/g, '"').replace(/"/g, '\\"');
+      }
+      const wrapped = `loadstring(game:HttpGet("${raw}"))()`;
+      outputBox.value = wrapped;
+      charCount.textContent = `${wrapped.length} 文字`;
+    }
+
+    async function copyResult() {
+      const text = outputBox.value;
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(text);
+        } else {
+          outputBox.select();
+          outputBox.setSelectionRange(0, text.length);
+          document.execCommand("copy");
+        }
+        copyBtn.textContent = "コピー完了！";
+        copyBtn.classList.add("copied");
+        showToast("コピーしました！");
+        setTimeout(() => {
+          copyBtn.textContent = "コピーする";
+          copyBtn.classList.remove("copied");
+        }, 1400);
+      } catch (err) {
+        outputBox.select();
+        showToast("選択したので手動でコピーしてね");
+      }
+    }
+
+    async function pasteFromClipboard() {
+      try {
+        if (navigator.clipboard && navigator.clipboard.readText) {
+          const clipText = await navigator.clipboard.readText();
+          if (clipText) {
+            scriptInput.value = clipText;
+            buildWrappedCode();
+            showToast("貼り付けました！");
+          }
+        } else {
+          scriptInput.focus();
+          showToast("入力欄をタップして貼り付けてね");
+        }
+      } catch (err) {
+        scriptInput.focus();
+        showToast("入力欄をタップして貼り付けてね");
+      }
+    }
+
+    scriptInput.addEventListener("input", buildWrappedCode);
+    trimToggle.addEventListener("change", buildWrappedCode);
+    escapeQuoteToggle.addEventListener("change", buildWrappedCode);
+
+    copyBtn.addEventListener("click", copyResult);
+    pasteBtn.addEventListener("click", pasteFromClipboard);
+    clearBtn.addEventListener("click", () => {
+      scriptInput.value = "";
+      buildWrappedCode();
+      scriptInput.focus();
+    });
+
+    // 初期表示
+    buildWrappedCode();
+  </script>
+</body>
+</html>
