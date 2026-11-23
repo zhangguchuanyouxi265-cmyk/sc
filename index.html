@@ -1,154 +1,918 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>投票アプリ</title>
-<style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    font-family: 'Helvetica Neue', Arial, 'Hiragino Sans', sans-serif;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    min-height: 100vh;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 20px;
-  }
-  .container {
-    background: #fff;
-    border-radius: 16px;
-    box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-    padding: 32px;
-    width: 100%;
-    max-width: 480px;
-  }
-  h1 {
-    font-size: 24px;
-    color: #333;
-    margin-bottom: 24px;
-    text-align: center;
-  }
-  .option {
-    margin-bottom: 16px;
-  }
-  .option-btn {
-    width: 100%;
-    padding: 18px;
-    font-size: 18px;
-    font-weight: bold;
-    color: #fff;
-    background: #667eea;
-    border: none;
-    border-radius: 12px;
-    cursor: pointer;
-    transition: transform 0.1s, background 0.2s;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-  }
-  .option-btn:hover { background: #5568d3; }
-  .option-btn:active { transform: scale(0.98); }
-  .option-btn.voted {
-    background: #48bb78;
-    cursor: default;
-  }
-  .option-btn:disabled { opacity: 0.9; }
-  .count {
-    background: rgba(255,255,255,0.3);
-    padding: 2px 10px;
-    border-radius: 20px;
-    font-size: 14px;
-  }
-  .bar-wrap {
-    height: 8px;
-    background: #e2e8f0;
-    border-radius: 4px;
-    margin-top: 8px;
-    overflow: hidden;
-  }
-  .bar {
-    height: 100%;
-    background: #667eea;
-    width: 0%;
-    transition: width 0.4s ease;
-  }
-  .total {
-    text-align: center;
-    margin-top: 24px;
-    color: #666;
-    font-size: 14px;
-  }
-  .msg {
-    text-align: center;
-    margin-top: 16px;
-    color: #48bb78;
-    font-weight: bold;
-    min-height: 20px;
-  }
-</style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LuaShield - Lua 難読化 & 解読ツール</title>
+  <style>
+    :root {
+      --bg-main: #090b10;
+      --bg-card: #111520;
+      --bg-input: #0d1018;
+      --border: #1f2638;
+      --accent: #6366f1;
+      --accent-hover: #4f46e5;
+      --accent-glow: rgba(99, 102, 241, 0.35);
+      --success: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --text-main: #f1f5f9;
+      --text-muted: #94a3b8;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Hiragino Kaku Gothic ProN", sans-serif;
+      background-color: var(--bg-main);
+      color: var(--text-main);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* スタート画面 */
+    #start-screen {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 24px;
+      background: radial-gradient(circle at center, #151b2e 0%, var(--bg-main) 70%);
+    }
+
+    .logo-badge {
+      display: inline-block;
+      padding: 6px 14px;
+      border-radius: 999px;
+      background: rgba(99, 102, 241, 0.15);
+      border: 1px solid rgba(99, 102, 241, 0.4);
+      color: #a5b4fc;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      margin-bottom: 16px;
+    }
+
+    #start-screen h1 {
+      font-size: clamp(2rem, 5vw, 3.2rem);
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      margin-bottom: 12px;
+      background: linear-gradient(135deg, #ffffff 30%, #818cf8 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    #start-screen p {
+      color: var(--text-muted);
+      max-width: 480px;
+      line-height: 1.6;
+      margin-bottom: 32px;
+      font-size: 15px;
+    }
+
+    .launch-btn {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      padding: 16px 40px;
+      font-size: 17px;
+      font-weight: 700;
+      border-radius: 14px;
+      cursor: pointer;
+      box-shadow: 0 0 28px var(--accent-glow);
+      transition: transform 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+    }
+
+    .launch-btn:hover {
+      background: var(--accent-hover);
+      transform: translateY(-2px);
+      box-shadow: 0 0 38px rgba(99, 102, 241, 0.55);
+    }
+
+    .launch-btn:active {
+      transform: scale(0.98);
+    }
+
+    /* メインアプリ画面 */
+    #app-screen {
+      display: none;
+      flex-direction: column;
+      min-height: 100vh;
+      max-width: 1280px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 16px;
+      gap: 16px;
+    }
+
+    header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      padding: 12px 18px;
+      border-radius: 14px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 800;
+      font-size: 18px;
+    }
+
+    .brand span {
+      color: #818cf8;
+    }
+
+    .mode-tabs {
+      display: flex;
+      background: var(--bg-input);
+      padding: 4px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+    }
+
+    .mode-tab {
+      background: transparent;
+      color: var(--text-muted);
+      border: none;
+      padding: 8px 18px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .mode-tab.active {
+      background: var(--accent);
+      color: #fff;
+    }
+
+    /* コントロールバー */
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      padding: 12px 18px;
+      border-radius: 14px;
+    }
+
+    .level-group {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .level-label {
+      font-size: 13px;
+      color: var(--text-muted);
+      margin-right: 4px;
+    }
+
+    .level-btn {
+      background: var(--bg-input);
+      color: var(--text-muted);
+      border: 1px solid var(--border);
+      padding: 7px 14px;
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .level-btn.active {
+      border-color: var(--accent);
+      color: #fff;
+      background: rgba(99, 102, 241, 0.2);
+    }
+
+    .action-group {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .btn {
+      border: 1px solid var(--border);
+      background: var(--bg-input);
+      color: var(--text-main);
+      padding: 8px 14px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .btn:hover {
+      border-color: #475569;
+      background: #181e2c;
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+      padding: 8px 22px;
+    }
+
+    .btn-primary:hover {
+      background: var(--accent-hover);
+      border-color: var(--accent-hover);
+    }
+
+    /* エディタグリッド */
+    .editor-grid {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    @media (max-width: 820px) {
+      .editor-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .panel {
+      display: flex;
+      flex-direction: column;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      overflow: hidden;
+      min-height: 360px;
+    }
+
+    .panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 16px;
+      background: rgba(255, 255, 255, 0.02);
+      border-bottom: 1px solid var(--border);
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-muted);
+    }
+
+    .panel-actions {
+      display: flex;
+      gap: 6px;
+    }
+
+    .mini-btn {
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      color: var(--text-main);
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 11px;
+      cursor: pointer;
+    }
+
+    .mini-btn:hover {
+      border-color: var(--accent);
+    }
+
+    textarea {
+      flex: 1;
+      width: 100%;
+      background: var(--bg-input);
+      color: #e2e8f0;
+      border: none;
+      padding: 16px;
+      font-family: "Fira Code", "Cascadia Code", Consolas, Monaco, monospace;
+      font-size: 13px;
+      line-height: 1.55;
+      resize: none;
+      outline: none;
+    }
+
+    textarea::placeholder {
+      color: #475569;
+    }
+
+    .status-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 16px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .badge-ok {
+      color: var(--success);
+      font-weight: 600;
+    }
+  </style>
 </head>
 <body>
-<div class="container">
-  <h1>どっちがいい？</h1>
 
-  <div class="option">
-    <button class="option-btn" data-id="swiss" onclick="vote('swiss')">
-      <span>スイスラ</span>
-      <span class="count" id="count-swiss">0</span>
-    </button>
-    <div class="bar-wrap"><div class="bar" id="bar-swiss"></div></div>
+  <!-- 起動画面 -->
+  <div id="start-screen">
+    <div class="logo-badge">LUA / LUAU OBFUSCATOR & DEOBFUSCATOR</div>
+    <h1>LuaShield</h1>
+    <p>スクリプトを入力してワンクリックで実行可能な難読化コードへ変換。多層暗号・VM風ステートマシン保護および解読復元に対応。</p>
+    <button class="launch-btn" onclick="launchApp()">コードエディタを起動</button>
   </div>
 
-  <div class="option">
-    <button class="option-btn" data-id="mesa" onclick="vote('mesa')">
-      <span>目砂</span>
-      <span class="count" id="count-mesa">0</span>
-    </button>
-    <div class="bar-wrap"><div class="bar" id="bar-mesa"></div></div>
+  <!-- メイン画面 -->
+  <div id="app-screen">
+    <header>
+      <div class="brand">🛡️ Lua<span>Shield</span></div>
+      <div class="mode-tabs">
+        <button class="mode-tab active" id="tab-obf" onclick="setMode('obf')">難読化 (Obfuscate)</button>
+        <button class="mode-tab" id="tab-deobf" onclick="setMode('deobf')">解読化 (Deobfuscate)</button>
+      </div>
+    </header>
+
+    <div class="controls">
+      <div class="level-group" id="obf-options">
+        <span class="level-label">保護強度:</span>
+        <button class="level-btn" data-level="standard" onclick="setLevel('standard')">標準 (バイト配列)</button>
+        <button class="level-btn" data-level="advanced" onclick="setLevel('advanced')">高度 (演算+ダミー変数)</button>
+        <button class="level-btn active" data-level="extreme" onclick="setLevel('extreme')">極限 (多層暗号+VM風)</button>
+      </div>
+
+      <div class="level-group" id="deobf-options" style="display:none;">
+        <label style="font-size:13px; color:var(--text-muted); display:flex; align-items:center; gap:6px; cursor:pointer;">
+          <input type="checkbox" id="auto-format" checked /> 解読後にインデントを自動整形する
+        </label>
+      </div>
+
+      <div class="action-group">
+        <button class="btn" onclick="loadSample()">サンプル挿入</button>
+        <button class="btn" onclick="swapIO()">⇅ 入出力入替</button>
+        <button class="btn" onclick="clearAll()">クリア</button>
+        <button class="btn btn-primary" id="run-btn" onclick="processCode()">難読化を実行</button>
+      </div>
+    </div>
+
+    <div class="editor-grid">
+      <div class="panel">
+        <div class="panel-header">
+          <span id="input-title">元のLuaコード (入力)</span>
+          <div class="panel-actions">
+            <button class="mini-btn" onclick="pasteInput()">貼り付け</button>
+          </div>
+        </div>
+        <textarea id="input-code" placeholder="ここにLuaスクリプトを入力してください...&#10;例: print('Hello World!')"></textarea>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">
+          <span id="output-title">難読化済みコード (実行可能)</span>
+          <div class="panel-actions">
+            <button class="mini-btn" onclick="copyOutput()">コピー</button>
+            <button class="mini-btn" onclick="downloadLua()">.lua保存</button>
+          </div>
+        </div>
+        <textarea id="output-code" readonly placeholder="生成されたコードがここに表示されます..."></textarea>
+      </div>
+    </div>
+
+    <div class="status-bar">
+      <span id="status-text" class="badge-ok">準備完了</span>
+      <span id="size-info">0 bytes → 0 bytes</span>
+    </div>
   </div>
 
-  <div class="total">合計投票数: <span id="total">0</span></div>
-  <div class="msg" id="msg"></div>
-</div>
+  <script>
+    let currentMode = 'obf';
+    let currentLevel = 'extreme';
 
-<script>
-  const votes = { swiss: 0, mesa: 0 };
-  let hasVoted = false;
-
-  function vote(id) {
-    if (hasVoted) {
-      document.getElementById('msg').textContent = '投票は1回までです';
-      return;
+    function launchApp() {
+      document.getElementById('start-screen').style.display = 'none';
+      document.getElementById('app-screen').style.display = 'flex';
     }
-    votes[id]++;
-    hasVoted = true;
 
-    // ボタン無効化
-    document.querySelectorAll('.option-btn').forEach(btn => {
-      btn.disabled = true;
-      if (btn.dataset.id === id) btn.classList.add('voted');
-    });
+    function setMode(mode) {
+      currentMode = mode;
+      document.getElementById('tab-obf').classList.toggle('active', mode === 'obf');
+      document.getElementById('tab-deobf').classList.toggle('active', mode === 'deobf');
+      document.getElementById('obf-options').style.display = mode === 'obf' ? 'flex' : 'none';
+      document.getElementById('deobf-options').style.display = mode === 'deobf' ? 'flex' : 'none';
 
-    document.getElementById('msg').textContent =
-      (id === 'swiss' ? 'スイスラ' : '目砂') + ' に投票しました！';
+      document.getElementById('input-title').textContent = mode === 'obf' ? '元のLuaコード (入力)' : '難読化されたコード (入力)';
+      document.getElementById('output-title').textContent = mode === 'obf' ? '難読化済みコード (実行可能)' : '解読されたLuaコード (出力)';
+      document.getElementById('run-btn').textContent = mode === 'obf' ? '難読化を実行' : '解読を実行';
+      setStatus('モードを切り替えました');
+    }
 
-    render();
-  }
+    function setLevel(level) {
+      currentLevel = level;
+      document.querySelectorAll('.level-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.level === level);
+      });
+    }
 
-  function render() {
-    const total = votes.swiss + votes.mesa;
-    document.getElementById('count-swiss').textContent = votes.swiss;
-    document.getElementById('count-mesa').textContent = votes.mesa;
-    document.getElementById('total').textContent = total;
+    function setStatus(msg, isError = false) {
+      const el = document.getElementById('status-text');
+      el.textContent = msg;
+      el.style.color = isError ? 'var(--danger)' : 'var(--success)';
+    }
 
-    document.getElementById('bar-swiss').style.width =
-      total ? (votes.swiss / total * 100) + '%' : '0%';
-    document.getElementById('bar-mesa').style.width =
-      total ? (votes.mesa / total * 100) + '%' : '0%';
-  }
+    function updateSize(inStr, outStr) {
+      const inBytes = new TextEncoder().encode(inStr).length;
+      const outBytes = new TextEncoder().encode(outStr).length;
+      document.getElementById('size-info').textContent = `${inBytes} bytes → ${outBytes} bytes`;
+    }
 
-  render();
-</script>
+    function loadSample() {
+      if (currentMode === 'obf') {
+        document.getElementById('input-code').value =
+`local Players = game:GetService("Players")
+local player = Players.LocalPlayer
+
+local function greet(name)
+    print("こんにちは、" .. name .. "さん！スクリプトが正常に動作しています。")
+end
+
+if player then
+    greet(player.Name)
+else
+    greet("ゲスト")
+end`;
+      } else {
+        const sampleObf = obfuscateExtreme(`print("LuaShield Extreme Decode Test OK!")`);
+        document.getElementById('input-code').value = sampleObf;
+      }
+      setStatus('サンプルコードを読み込みました');
+    }
+
+    function swapIO() {
+      const inp = document.getElementById('input-code');
+      const out = document.getElementById('output-code');
+      const temp = inp.value;
+      inp.value = out.value;
+      out.value = temp;
+      setStatus('入力と出力を入れ替えました');
+    }
+
+    function clearAll() {
+      document.getElementById('input-code').value = '';
+      document.getElementById('output-code').value = '';
+      updateSize('', '');
+      setStatus('クリアしました');
+    }
+
+    async function pasteInput() {
+      try {
+        const text = await navigator.clipboard.readText();
+        document.getElementById('input-code').value = text;
+        setStatus('クリップボードから貼り付けました');
+      } catch {
+        setStatus('貼り付け権限がありません。手動でペーストしてください', true);
+      }
+    }
+
+    function copyOutput() {
+      const out = document.getElementById('output-code').value;
+      if (!out) return;
+      navigator.clipboard.writeText(out).then(() => {
+        setStatus('出力コードをコピーしました！');
+      });
+    }
+
+    function downloadLua() {
+      const out = document.getElementById('output-code').value;
+      if (!out) return;
+      const blob = new Blob([out], { type: 'text/plain;charset=utf-8' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = currentMode === 'obf' ? 'protected_script.lua' : 'decoded_script.lua';
+      a.click();
+      setStatus('ファイルをダウンロードしました');
+    }
+
+    function randInt(min, max) {
+      return Math.floor(Math.random() * (max - min + 1)) + min;
+    }
+
+    function randIdent(len = 10) {
+      const first = 'lIO_';
+      const chars = 'lI1O0_';
+      let res = first[randInt(0, first.length - 1)];
+      for (let i = 1; i < len; i++) {
+        res += chars[randInt(0, chars.length - 1)];
+      }
+      return res + '_' + randInt(10, 99);
+    }
+
+    function toDecEscape(str) {
+      return Array.from(str).map(c => '\\' + c.charCodeAt(0)).join('');
+    }
+
+    // 1. 標準難読化
+    function obfuscateStandard(src) {
+      const bytes = Array.from(new TextEncoder().encode(src));
+      const key = randInt(15, 210);
+      const encoded = bytes.map(b => (b + key) % 256);
+
+      const vArr = randIdent(8);
+      const vRes = randIdent(8);
+      const vIdx = randIdent(6);
+      const vFn = randIdent(8);
+
+      return `--[[ LuaShield Standard ]]
+local ${vArr}={${encoded.join(',')}}
+local ${vRes}={}
+for ${vIdx}=1,#${vArr} do
+    ${vRes}[${vIdx}]=string.char((${vArr}[${vIdx}]-${key})%256)
+end
+local ${vFn}=(loadstring or load)(table.concat(${vRes}))
+if ${vFn} then ${vFn}() end`;
+    }
+
+    // 2. 高度難読化
+    function obfuscateAdvanced(src) {
+      const bytes = Array.from(new TextEncoder().encode(src));
+      const k1 = randInt(17, 199);
+      const k2 = randInt(3, 41);
+      const encoded = bytes.map((b, i) => ((b ^ ((k1 + i * k2) % 256)) + k2) % 256);
+
+      const vData = randIdent(10);
+      const vOut = randIdent(10);
+      const vI = randIdent(8);
+      const vB = randIdent(8);
+      const vJunk1 = randIdent(9);
+      const vJunk2 = randIdent(9);
+      const vEnv = randIdent(9);
+      const vLoad = randIdent(9);
+
+      const sChar = toDecEscape('char');
+      const sConcat = toDecEscape('concat');
+      const sLoad = toDecEscape('loadstring');
+
+      return `--[[ LuaShield Advanced ]]
+local ${vJunk1}=${randInt(1000,9999)}
+local ${vJunk2}=function(x) return (x*${randInt(3,19)})%${randInt(101,997)} end
+local ${vData}={${encoded.join(',')}}
+local ${vOut}={}
+for ${vI}=1,#${vData} do
+    if ${vJunk1} < 0 then ${vJunk2}(${vI}) end
+    local ${vB}=(${vData}[${vI}]-${k2})%256
+    ${vB}=bit32 and bit32.bxor(${vB},(${k1}+(${vI}-1)*${k2})%256) or (function(a,b) local r,p=0,1 while a>0 or b>0 do local ra,rb=a%2,b%2 if ra~=rb then r=r+p end a=(a-ra)/2 b=(b-rb)/2 p=p*2 end return r end)(${vB},(${k1}+(${vI}-1)*${k2})%256)
+    ${vOut}[${vI}]=string["${sChar}"](${vB})
+end
+local ${vEnv}=(getfenv and getfenv()) or _G
+local ${vLoad}=${vEnv}["${sLoad}"] or load
+if ${vLoad} then
+    local _exec=${vLoad}(table["${sConcat}"](${vOut}))
+    if _exec then _exec() end
+end`;
+    }
+
+    // 3. 極限難読化 (RLE圧縮 + LCGストリーム暗号 + ローリングXOR + チャンクシャッフル + チェックサム + VM風ステートマシン)
+    function obfuscateExtreme(src) {
+      const rawBytes = Array.from(new TextEncoder().encode(src));
+
+      // RLE風ペア圧縮 (count, byte)
+      const rle = [];
+      let i = 0;
+      while (i < rawBytes.length) {
+        let count = 1;
+        while (i + count < rawBytes.length && rawBytes[i] === rawBytes[i + count] && count < 250) {
+          count++;
+        }
+        rle.push(count, rawBytes[i]);
+        i += count;
+      }
+
+      // チェックサム計算
+      let checksum = 0;
+      for (let idx = 0; idx < rawBytes.length; idx++) {
+        checksum = (checksum + rawBytes[idx] * ((idx % 17) + 1)) % 65535;
+      }
+
+      // LCG + ローリングXOR暗号化
+      const seed = randInt(1024, 60000);
+      const mult = 25173;
+      const inc = 13849;
+      let state = seed;
+      let rolling = (seed % 251) + 1;
+      const cipher = [];
+
+      for (let idx = 0; idx < rle.length; idx++) {
+        state = (state * mult + inc) % 65536;
+        const keyByte = (state >> 8) & 0xFF;
+        const plain = rle[idx];
+        const enc = ((plain ^ keyByte ^ rolling) + (idx % 13)) % 256;
+        cipher.push(enc);
+        rolling = (plain + keyByte) % 256;
+      }
+
+      // 4チャンク分割とシャッフル + ダミーノイズ付加
+      const numChunks = 4;
+      const chunkSize = Math.ceil(cipher.length / numChunks);
+      const chunks = [];
+      for (let c = 0; c < numChunks; c++) {
+        const slice = cipher.slice(c * chunkSize, (c + 1) * chunkSize);
+        const fakeLen = randInt(2, 5);
+        for (let f = 0; f < fakeLen; f++) slice.push(randInt(0, 255));
+        chunks.push({ origIdx: c, realLen: Math.max(0, cipher.slice(c * chunkSize, (c + 1) * chunkSize).length), data: slice });
+      }
+
+      // シャッフル
+      for (let c = chunks.length - 1; c > 0; c--) {
+        const j = randInt(0, c);
+        [chunks[c], chunks[j]] = [chunks[j], chunks[c]];
+      }
+
+      const orderMap = new Array(numChunks);
+      chunks.forEach((ch, shuffledIdx) => {
+        orderMap[ch.origIdx] = shuffledIdx + 1; // 1-based for Lua
+      });
+
+      const vVM = randIdent(10);
+      const vState = randIdent(9);
+      const vChunks = randIdent(10);
+      const vOrder = randIdent(9);
+      const vLens = randIdent(9);
+      const vStream = randIdent(9);
+      const vDec = randIdent(9);
+      const vBxor = randIdent(9);
+      const vChk = randIdent(9);
+
+      const chunkTables = chunks.map(c => `{${c.data.join(',')}}`).join(',');
+      const lensTable = chunks.map(c => c.realLen).join(',');
+
+      const sChar = toDecEscape('char');
+      const sConcat = toDecEscape('concat');
+      const sLoad = toDecEscape('loadstring');
+
+      return `--[[ LuaShield Extreme VM-Protected ]]
+local function ${vVM}()
+    local ${vBxor}=function(a,b)
+        if bit32 and bit32.bxor then return bit32.bxor(a,b) end
+        local r,p=0,1
+        while a>0 or b>0 do
+            local ra,rb=a%2,b%2
+            if ra~=rb then r=r+p end
+            a=(a-ra)/2 b=(b-rb)/2 p=p*2
+        end
+        return r
+    end
+    local ${vChunks}={${chunkTables}}
+    local ${vOrder}={${orderMap.join(',')}}
+    local ${vLens}={${lensTable}}
+    local ${vStream}={}
+    local ${vDec}={}
+    local ${vChk}=0
+    local ${vState}=101
+    while ${vState}~=0 do
+        if ${vState}==101 then
+            for i=1,#${vOrder} do
+                local idx=${vOrder}[i]
+                local c=${vChunks}[idx]
+                for j=1,${vLens}[idx] do
+                    ${vStream}[#${vStream}+1]=c[j]
+                end
+            end
+            ${vState}=204
+        elseif ${vState}==204 then
+            local st=${seed}
+            local rl=(${seed}%251)+1
+            local raw={}
+            for i=1,#${vStream} do
+                st=(st*${mult}+${inc})%65536
+                local kb=math.floor(st/256)%256
+                local pl=${vBxor}(${vBxor}((${vStream}[i]-((i-1)%13))%256,kb),rl)
+                raw[i]=pl
+                rl=(pl+kb)%256
+            end
+            local k=1
+            while k<=#raw do
+                local cnt=raw[k]
+                local val=raw[k+1]
+                for _=1,cnt do
+                    ${vDec}[#${vDec}+1]=val
+                end
+                k=k+2
+            end
+            ${vState}=309
+        elseif ${vState}==309 then
+            for i=1,#${vDec} do
+                ${vChk}=(${vChk}+${vDec}[i]*(((i-1)%17)+1))%65535
+            end
+            if ${vChk}==${checksum} then
+                ${vState}=412
+            else
+                ${vState}=0
+            end
+        elseif ${vState}==412 then
+            local out={}
+            for i=1,#${vDec} do
+                out[i]=string["${sChar}"](${vDec}[i])
+            end
+            local env=(getfenv and getfenv()) or _G
+            local fn=env["${sLoad}"] or load
+            ${vState}=0
+            if fn then
+                local run=fn(table["${sConcat}"](out))
+                if run then run() end
+            end
+        end
+    end
+end
+${vVM}()`;
+    }
+
+    // 解読エンジン
+    function deobfuscateCode(code) {
+      let result = null;
+
+      // 1. LuaShield Extreme VM 判定
+      if (code.includes('LuaShield Extreme') || (code.includes('65536') && code.includes('65535'))) {
+        try {
+          const chunksMatch = code.match(/local\s+[a-zA-Z0-9_]+\s*=\s*\{\s*(\{[0-9,\s]+\}(?:\s*,\s*\{[0-9,\s]+\})+)\s*\}/);
+          const orderMatch = code.match(/local\s+[a-zA-Z0-9_]+\s*=\s*\{([0-9,\s]+)\}\s*local\s+[a-zA-Z0-9_]+\s*=\s*\{([0-9,\s]+)\}/);
+          const seedMatch = code.match(/local\s+st\s*=\s*(\d+)/);
+          const multIncMatch = code.match(/st\s*=\s*\(st\s*\*\s*(\d+)\s*\+\s*(\d+)\)\s*%\s*65536/);
+
+          if (chunksMatch && orderMatch && seedMatch && multIncMatch) {
+            const rawChunkGroups = chunksMatch[1].match(/\{([0-9,\s]+)\}/g).map(g =>
+              g.replace(/[{}]/g, '').split(',').map(n => parseInt(n.trim(), 10))
+            );
+            const order = orderMatch[1].split(',').map(n => parseInt(n.trim(), 10));
+            const lens = orderMatch[2].split(',').map(n => parseInt(n.trim(), 10));
+            let st = parseInt(seedMatch[1], 10);
+            const mult = parseInt(multIncMatch[1], 10);
+            const inc = parseInt(multIncMatch[2], 10);
+
+            const stream = [];
+            for (let i = 0; i < order.length; i++) {
+              const idx = order[i] - 1;
+              const c = rawChunkGroups[idx];
+              for (let j = 0; j < lens[idx]; j++) {
+                stream.push(c[j]);
+              }
+            }
+
+            let rl = (st % 251) + 1;
+            const rle = [];
+            for (let i = 0; i < stream.length; i++) {
+              st = (st * mult + inc) % 65536;
+              const kb = Math.floor(st / 256) % 256;
+              const sub = (((stream[i] - (i % 13)) % 256) + 256) % 256;
+              const pl = (sub ^ kb ^ rl) & 0xFF;
+              rle.push(pl);
+              rl = (pl + kb) % 256;
+            }
+
+            const decBytes = [];
+            for (let k = 0; k < rle.length; k += 2) {
+              const cnt = rle[k];
+              const val = rle[k + 1];
+              for (let c = 0; c < cnt; c++) decBytes.push(val);
+            }
+            result = new TextDecoder().decode(new Uint8Array(decBytes));
+          }
+        } catch (e) {}
+      }
+
+      // 2. LuaShield Advanced 判定
+      if (!result && code.includes('bit32.bxor')) {
+        try {
+          const arrMatch = code.match(/\{([0-9,\s]{10,})\}/);
+          const subMatch = code.match(/\[[a-zA-Z0-9_]+\]\s*-\s*(\d+)\)\s*%\s*256/);
+          const xorMatch = code.match(/\((\d+)\s*\+\s*\([a-zA-Z0-9_]+\s*-\s*1\)\s*\*\s*(\d+)\)\s*%\s*256/);
+          if (arrMatch && subMatch && xorMatch) {
+            const arr = arrMatch[1].split(',').map(n => parseInt(n.trim(), 10));
+            const k2 = parseInt(subMatch[1], 10);
+            const k1 = parseInt(xorMatch[1], 10);
+            const bytes = arr.map((v, i) => {
+              const b = (((v - k2) % 256) + 256) % 256;
+              return (b ^ ((k1 + i * k2) % 256)) & 0xFF;
+            });
+            result = new TextDecoder().decode(new Uint8Array(bytes));
+          }
+        } catch (e) {}
+      }
+
+      // 3. LuaShield Standard / 一般的なオフセットバイト配列
+      if (!result) {
+        try {
+          const arrMatch = code.match(/\{([0-9,\s]{6,})\}/);
+          const offsetMatch = code.match(/\[[a-zA-Z0-9_]+\]\s*-\s*(\d+)\)\s*%\s*256/);
+          if (arrMatch && offsetMatch) {
+            const arr = arrMatch[1].split(',').map(n => parseInt(n.trim(), 10));
+            const key = parseInt(offsetMatch[1], 10);
+            const bytes = arr.map(v => (((v - key) % 256) + 256) % 256);
+            result = new TextDecoder().decode(new Uint8Array(bytes));
+          }
+        } catch (e) {}
+      }
+
+      // 4. 汎用 string.char(...) 展開
+      if (!result) {
+        const charMatch = code.match(/string\.char\s*\(([0-9,\s]+)\)/);
+        if (charMatch) {
+          const bytes = charMatch[1].split(',').map(n => parseInt(n.trim(), 10));
+          result = new TextDecoder().decode(new Uint8Array(bytes));
+        }
+      }
+
+      // 5. 10進・16進エスケープ文字列 (\104\101... / \x68\x65...) の展開
+      if (!result) {
+        const escMatch = code.match(/["']((?:\\[0-9]{1,3}|\\x[0-9a-fA-F]{2})+)["']/);
+        if (escMatch) {
+          const raw = escMatch[1];
+          const bytes = [];
+          const tokenRegex = /\\x([0-9a-fA-F]{2})|\\([0-9]{1,3})/g;
+          let m;
+          while ((m = tokenRegex.exec(raw)) !== null) {
+            if (m[1]) bytes.push(parseInt(m[1], 16));
+            else if (m[2]) bytes.push(parseInt(m[2], 10));
+          }
+          if (bytes.length > 0) {
+            result = new TextDecoder().decode(new Uint8Array(bytes));
+          }
+        }
+      }
+
+      return result;
+    }
+
+    function formatLua(src) {
+      const lines = src.split(/\r?\n/);
+      let indent = 0;
+      const out = [];
+      for (let raw of lines) {
+        const line = raw.trim();
+        if (!line) {
+          out.push('');
+          continue;
+        }
+        if (/^(end|else|elseif|until)\b/.test(line)) {
+          indent = Math.max(0, indent - 1);
+        }
+        out.push('    '.repeat(indent) + line);
+        if (/\b(then|do|repeat)\s*$/.test(line) || /^function\b/.test(line) || /=\s*function\b/.test(line)) {
+          if (!/\bend\s*$/.test(line)) {
+            indent++;
+          }
+        }
+      }
+      return out.join('\n');
+    }
+
+    function processCode() {
+      const input = document.getElementById('input-code').value;
+      if (!input.trim()) {
+        setStatus('コードを入力してください', true);
+        return;
+      }
+
+      if (currentMode === 'obf') {
+        let output = '';
+        if (currentLevel === 'standard') output = obfuscateStandard(input);
+        else if (currentLevel === 'advanced') output = obfuscateAdvanced(input);
+        else output = obfuscateExtreme(input);
+
+        document.getElementById('output-code').value = output;
+        updateSize(input, output);
+        setStatus(`難読化完了 (${currentLevel.toUpperCase()}モード)`);
+      } else {
+        let decoded = deobfuscateCode(input);
+        if (decoded !== null) {
+          if (document.getElementById('auto-format').checked) {
+            decoded = formatLua(decoded);
+          }
+          document.getElementById('output-code').value = decoded;
+          updateSize(input, decoded);
+          setStatus('解読・復元に成功しました！');
+        } else {
+          setStatus('対応していない難読化形式か、すでに平文のコードです', true);
+        }
+      }
+    }
+  </script>
 </body>
 </html>
