@@ -1,0 +1,717 @@
+--[[
+    Night Shader GUI v4 (client-side visual only)
+    One file: paste into the executor and run.
+    - Collapsible window. Modes: Night, Dawn, Day, Dusk, Cycle, Game.
+    - Low sun angle for long side shadows, warm red/orange light at sunrise and sunset.
+    - Shadows for your character (feet, held items) and for world objects.
+    - Wind for terrain grass (Workspace.GlobalWind + Terrain.Decoration).
+    Only your own client is affected. Not tested here.
+]]
+
+local Players = game:GetService("Players")
+local Lighting = game:GetService("Lighting")
+local CoreGui = game:GetService("CoreGui")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+
+local localPlayer = Players.LocalPlayer
+
+-- ===================== Config =====================
+local CONFIG = {
+    -- Fixed clock times per mode (hours, 0-24)
+    NightClockTime = 0,
+    DawnClockTime  = 6.2,   -- sun right at the horizon
+    DayClockTime   = 16,    -- lower sun than noon: longer shadows that fall to the side
+    DuskClockTime  = 17.8,
+    CycleSpeed     = 0.25,  -- in-game hours per real second (24h in 96s)
+
+    -- Optional: lower/raise the sun's path. nil keeps the game's own value.
+    GeographicLatitude = nil,
+
+    NightBrightness = 0.6,
+    DayBrightness   = 2.2,
+    NightAmbient        = Color3.fromRGB(22, 26, 42),
+    DayAmbient          = Color3.fromRGB(110, 112, 125),
+    GoldenAmbient       = Color3.fromRGB(150, 100, 80),
+    NightOutdoorAmbient = Color3.fromRGB(34, 40, 66),
+    DayOutdoorAmbient   = Color3.fromRGB(135, 138, 150),
+    NightShadowSoftness = 0.15,
+    DayShadowSoftness   = 0.25,
+
+    -- Sunrise / sunset colors
+    GoldenAtmosphereColor = Color3.fromRGB(255, 165, 110),
+    GoldenAtmosphereDecay = Color3.fromRGB(210, 75, 45),
+    GoldenTint            = Color3.fromRGB(255, 205, 170),
+    GoldenColorShiftTop   = Color3.fromRGB(255, 140, 70),
+
+    StarCount = 4000,
+
+    ContactShadow = true,
+    ContactShadowSize = 3.2,
+
+    WorldShadows = true,
+    WorldShadowMinSize = 0.3,
+    WorldShadowMaxTransparency = 0.9,
+    WorldBatch = 300,
+
+    -- Wind for terrain grass
+    Wind = true,
+    WindBase = 14,    -- studs/s
+    WindGust = 12,    -- extra gust strength
+    WindTurnSpeed = 0.05, -- how fast the wind direction drifts
+
+    ReapplyInterval = 1.0,
+}
+
+local MODES = { "Night", "Dawn", "Day", "Dusk", "Cycle", "Game" }
+
+-- ===================== State =====================
+local enabled = false
+local modeIndex = 1
+local alive = true
+
+local savedLighting = nil
+local savedCast = setmetatable({}, { __mode = "k" })
+local savedWind = nil
+local detachedSky = {}
+local created = {}
+local colorEffect, atmosphere, raysEffect
+local contactPart = nil
+local descendantConnection = nil
+local worldConnection = nil
+local worldToken = 0
+local windWorks = nil -- nil unknown, true/false after the first attempt
+
+local LIGHTING_PROPS = {
+    "Brightness", "Ambient", "OutdoorAmbient", "ClockTime", "GlobalShadows",
+    "ShadowSoftness", "EnvironmentDiffuseScale", "EnvironmentSpecularScale",
+    "ExposureCompensation", "FogColor", "ColorShift_Top", "ColorShift_Bottom",
+    "GeographicLatitude",
+}
+
+local function saveLighting()
+    if savedLighting then return end
+    savedLighting = {}
+    for _, prop in ipairs(LIGHTING_PROPS) do
+        local ok, value = pcall(function() return Lighting[prop] end)
+        if ok then savedLighting[prop] = value end
+    end
+    local okTech, tech = pcall(function() return Lighting.Technology end)
+    if okTech then savedLighting.Technology = tech end
+end
+
+local function restoreLighting()
+    if not savedLighting then return end
+    for prop, value in pairs(savedLighting) do
+        if prop == "Technology" then
+            pcall(function() sethiddenproperty(Lighting, "Technology", value) end)
+        else
+            pcall(function() Lighting[prop] = value end)
+        end
+    end
+    savedLighting = nil
+end
+
+local function make(className, props, parent)
+    local inst = Instance.new(className)
+    for k, v in pairs(props) do inst[k] = v end
+    inst.Parent = parent
+    table.insert(created, inst)
+    return inst
+end
+
+-- ===================== Lighting (follows the clock) =====================
+local function sunElevation(clockTime)
+    return math.sin((clockTime - 6) / 12 * math.pi) -- -1 at midnight, 0 at 6 and 18, 1 at noon
+end
+
+local function daylightFactor(clockTime)
+    return math.clamp(sunElevation(clockTime) * 1.5, 0, 1)
+end
+
+-- 1 right at sunrise/sunset, fading out as the sun climbs or sinks.
+local function goldenFactor(clockTime)
+    return math.clamp(1 - math.abs(sunElevation(clockTime) - 0.05) / 0.38, 0, 1)
+end
+
+local NIGHT_ATM_COLOR = Color3.fromRGB(150, 160, 190)
+local DAY_ATM_COLOR   = Color3.fromRGB(195, 205, 225)
+local NIGHT_ATM_DECAY = Color3.fromRGB(70, 80, 120)
+local DAY_ATM_DECAY   = Color3.fromRGB(106, 112, 125)
+local NIGHT_TINT      = Color3.fromRGB(215, 225, 255)
+local DAY_TINT        = Color3.fromRGB(255, 252, 245)
+local NIGHT_FOG       = Color3.fromRGB(14, 18, 32)
+local DAY_FOG         = Color3.fromRGB(170, 185, 210)
+
+local function applyLightingValues()
+    local t = Lighting.ClockTime
+    local f = daylightFactor(t)
+    local g = goldenFactor(t)
+
+    Lighting.Brightness = CONFIG.NightBrightness + (CONFIG.DayBrightness - CONFIG.NightBrightness) * f
+    Lighting.Ambient = CONFIG.NightAmbient:Lerp(CONFIG.DayAmbient, f):Lerp(CONFIG.GoldenAmbient, g * 0.5)
+    Lighting.OutdoorAmbient = CONFIG.NightOutdoorAmbient:Lerp(CONFIG.DayOutdoorAmbient, f)
+        :Lerp(CONFIG.GoldenAmbient, g * 0.45)
+    Lighting.ColorShift_Top = Color3.new(0, 0, 0):Lerp(CONFIG.GoldenColorShiftTop, g)
+    Lighting.ShadowSoftness = CONFIG.NightShadowSoftness
+        + (CONFIG.DayShadowSoftness - CONFIG.NightShadowSoftness) * f
+    Lighting.GlobalShadows = true
+    Lighting.EnvironmentDiffuseScale = 0.6
+    Lighting.EnvironmentSpecularScale = 0.6
+    Lighting.ExposureCompensation = 0.1 * (1 - f)
+    Lighting.FogColor = NIGHT_FOG:Lerp(DAY_FOG, f):Lerp(CONFIG.GoldenAtmosphereColor, g * 0.5)
+    if CONFIG.GeographicLatitude then
+        Lighting.GeographicLatitude = CONFIG.GeographicLatitude
+    end
+
+    if atmosphere then
+        atmosphere.Color = NIGHT_ATM_COLOR:Lerp(DAY_ATM_COLOR, f):Lerp(CONFIG.GoldenAtmosphereColor, g)
+        atmosphere.Decay = NIGHT_ATM_DECAY:Lerp(DAY_ATM_DECAY, f):Lerp(CONFIG.GoldenAtmosphereDecay, g)
+        atmosphere.Haze = 1.2 + 1.3 * g
+        atmosphere.Density = 0.3 + 0.08 * g
+        atmosphere.Glare = 1.5 * g
+    end
+    if colorEffect then
+        colorEffect.TintColor = NIGHT_TINT:Lerp(DAY_TINT, f):Lerp(CONFIG.GoldenTint, g * 0.8)
+    end
+    if raysEffect then
+        raysEffect.Intensity = 0.08 + 0.22 * g
+    end
+end
+
+-- ===================== Shadows: character =====================
+local function forceCastShadow(part)
+    if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
+        if savedCast[part] == nil then savedCast[part] = part.CastShadow end
+        part.CastShadow = true
+    end
+end
+
+local function applyCharacterShadow(character)
+    if not character then return end
+    for _, inst in ipairs(character:GetDescendants()) do
+        forceCastShadow(inst)
+    end
+end
+
+local function watchCharacter(character)
+    if descendantConnection then
+        descendantConnection:Disconnect()
+        descendantConnection = nil
+    end
+    if not character then return end
+    descendantConnection = character.DescendantAdded:Connect(function(inst)
+        if enabled then forceCastShadow(inst) end
+    end)
+end
+
+-- ===================== Shadows: world objects =====================
+local function isWorldCandidate(inst)
+    if not inst:IsA("BasePart") or inst:IsA("Terrain") then return false end
+    if inst.Name == "HumanoidRootPart" then return false end
+    if inst.Transparency >= CONFIG.WorldShadowMaxTransparency then return false end
+    local camera = workspace.CurrentCamera
+    if camera and inst:IsDescendantOf(camera) then return false end
+    local size = inst.Size
+    if math.max(size.X, size.Y, size.Z) < CONFIG.WorldShadowMinSize then return false end
+    return true
+end
+
+local function enableWorldShadow(inst)
+    if isWorldCandidate(inst) then
+        if savedCast[inst] == nil then savedCast[inst] = inst.CastShadow end
+        inst.CastShadow = true
+    end
+end
+
+local function startWorldShadows()
+    if not CONFIG.WorldShadows then return end
+    worldToken += 1
+    local token = worldToken
+    task.spawn(function()
+        local count = 0
+        for _, inst in ipairs(workspace:GetDescendants()) do
+            if token ~= worldToken or not enabled then return end
+            pcall(enableWorldShadow, inst)
+            count += 1
+            if count % CONFIG.WorldBatch == 0 then task.wait() end
+        end
+    end)
+    if worldConnection then worldConnection:Disconnect() end
+    worldConnection = workspace.DescendantAdded:Connect(function(inst)
+        if enabled then pcall(enableWorldShadow, inst) end
+    end)
+end
+
+local function stopWorldShadows()
+    worldToken += 1
+    if worldConnection then
+        worldConnection:Disconnect()
+        worldConnection = nil
+    end
+end
+
+-- ===================== Wind (terrain grass) =====================
+local function getTerrain()
+    return workspace:FindFirstChildOfClass("Terrain")
+end
+
+local function setTerrainDecoration(terrain, value)
+    local ok = pcall(function() terrain.Decoration = value end)
+    if not ok then
+        pcall(function() sethiddenproperty(terrain, "Decoration", value) end)
+    end
+end
+
+local function startWind()
+    if not CONFIG.Wind or savedWind then return end
+    savedWind = {}
+    pcall(function() savedWind.wind = workspace.GlobalWind end)
+    local terrain = getTerrain()
+    if terrain then
+        local ok, value = pcall(function() return terrain.Decoration end)
+        if not ok then
+            local okHidden, hidden = pcall(function() return gethiddenproperty(terrain, "Decoration") end)
+            if okHidden then ok, value = true, hidden end
+        end
+        if ok then savedWind.decoration = value end
+        setTerrainDecoration(terrain, true)
+    end
+end
+
+local function stopWind()
+    if not savedWind then return end
+    if savedWind.wind ~= nil then
+        pcall(function() workspace.GlobalWind = savedWind.wind end)
+    end
+    local terrain = getTerrain()
+    if terrain and savedWind.decoration ~= nil then
+        setTerrainDecoration(terrain, savedWind.decoration)
+    end
+    savedWind = nil
+    windWorks = nil
+end
+
+local function updateWind()
+    if not enabled or not CONFIG.Wind or not savedWind then return end
+    local t = os.clock()
+    local angle = t * CONFIG.WindTurnSpeed + math.noise(t * 0.03, 1.7) * 2
+    local gust = math.noise(t * 0.25, 4.2) * 0.5 + 0.5
+    local speed = CONFIG.WindBase + CONFIG.WindGust * gust
+    local ok = pcall(function()
+        workspace.GlobalWind = Vector3.new(math.cos(angle), 0, math.sin(angle)) * speed
+    end)
+    if windWorks == nil then windWorks = ok end
+end
+
+-- ===================== Contact shadow under the feet =====================
+local rayParams = RaycastParams.new()
+rayParams.FilterType = Enum.RaycastFilterType.Exclude
+
+local function getContactPart()
+    if contactPart and contactPart.Parent then return contactPart end
+    local camera = workspace.CurrentCamera
+    if not camera then return nil end
+    contactPart = Instance.new("Part")
+    contactPart.Name = "NightShaderContact"
+    contactPart.Shape = Enum.PartType.Cylinder
+    contactPart.Size = Vector3.new(0.05, CONFIG.ContactShadowSize, CONFIG.ContactShadowSize)
+    contactPart.Anchored = true
+    contactPart.CanCollide = false
+    contactPart.CanQuery = false
+    contactPart.CanTouch = false
+    contactPart.CastShadow = false
+    contactPart.Material = Enum.Material.SmoothPlastic
+    contactPart.Color = Color3.new(0, 0, 0)
+    contactPart.Transparency = 1
+    contactPart.Parent = camera
+    return contactPart
+end
+
+local function updateContactShadow()
+    local part = contactPart
+    if not enabled or not CONFIG.ContactShadow then
+        if part then part.Transparency = 1 end
+        return
+    end
+    local character = localPlayer.Character
+    local root = character and character:FindFirstChild("HumanoidRootPart")
+    part = getContactPart()
+    if not part then return end
+    if not root then
+        part.Transparency = 1
+        return
+    end
+    rayParams.FilterDescendantsInstances = { character, part }
+    local result = workspace:Raycast(root.Position, Vector3.new(0, -60, 0), rayParams)
+    if not result then
+        part.Transparency = 1
+        return
+    end
+    local height = (root.Position - result.Position).Magnitude
+    part.Transparency = math.clamp(0.55 + height / 40, 0.55, 1)
+    local up = result.Normal
+    local base = CFrame.lookAt(result.Position + up * 0.03, result.Position + up * 1.03)
+    part.CFrame = base * CFrame.Angles(0, math.rad(90), 0)
+end
+
+-- ===================== Effects =====================
+local function enableEffects()
+    for _, inst in ipairs(Lighting:GetChildren()) do
+        if inst:IsA("Sky") or inst:IsA("Atmosphere") then
+            table.insert(detachedSky, { inst = inst, parent = Lighting })
+            inst.Parent = nil
+        end
+    end
+
+    make("Sky", {
+        Name = "NightShaderSky",
+        CelestialBodiesShown = true,
+        StarCount = CONFIG.StarCount,
+        SunAngularSize = 14,
+        MoonAngularSize = 14,
+    }, Lighting)
+
+    atmosphere = make("Atmosphere", {
+        Name = "NightShaderAtmosphere",
+        Density = 0.3,
+        Offset = 0.25,
+        Color = NIGHT_ATM_COLOR,
+        Decay = NIGHT_ATM_DECAY,
+        Glare = 0,
+        Haze = 1.2,
+    }, Lighting)
+
+    colorEffect = make("ColorCorrectionEffect", {
+        Name = "NightShaderColor",
+        Contrast = 0.12,
+        Saturation = -0.05,
+        TintColor = NIGHT_TINT,
+    }, Lighting)
+
+    make("BloomEffect", {
+        Name = "NightShaderBloom",
+        Intensity = 0.35,
+        Size = 28,
+        Threshold = 1.6,
+    }, Lighting)
+
+    raysEffect = make("SunRaysEffect", {
+        Name = "NightShaderRays",
+        Intensity = 0.08,
+        Spread = 0.6,
+    }, Lighting)
+end
+
+local function disableEffects()
+    for _, inst in ipairs(created) do
+        pcall(function() inst:Destroy() end)
+    end
+    table.clear(created)
+    colorEffect, atmosphere, raysEffect = nil, nil, nil
+
+    for _, entry in ipairs(detachedSky) do
+        pcall(function() entry.inst.Parent = entry.parent end)
+    end
+    table.clear(detachedSky)
+
+    stopWorldShadows()
+    for part, original in pairs(savedCast) do
+        pcall(function() part.CastShadow = original end)
+    end
+    table.clear(savedCast)
+
+    stopWind()
+
+    if contactPart then
+        pcall(function() contactPart:Destroy() end)
+        contactPart = nil
+    end
+    if descendantConnection then
+        descendantConnection:Disconnect()
+        descendantConnection = nil
+    end
+end
+
+-- ===================== GUI =====================
+local function pickGuiParent()
+    local ok, hui = pcall(function() return gethui and gethui() end)
+    if ok and hui then return hui end
+    local okCore = pcall(function() return CoreGui.Name end)
+    if okCore then return CoreGui end
+    return localPlayer:WaitForChild("PlayerGui")
+end
+
+local old = pickGuiParent():FindFirstChild("NightShaderGui")
+if old then old:Destroy() end
+
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "NightShaderGui"
+screenGui.ResetOnSpawn = false
+screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+pcall(function()
+    if syn and syn.protect_gui then syn.protect_gui(screenGui) end
+end)
+screenGui.Parent = pickGuiParent()
+
+local FRAME_WIDTH = 280
+local FRAME_HEIGHT_OPEN = 270
+local FRAME_HEIGHT_CLOSED = 34
+
+local frame = Instance.new("Frame")
+frame.Size = UDim2.fromOffset(FRAME_WIDTH, FRAME_HEIGHT_OPEN)
+frame.Position = UDim2.new(0.5, -FRAME_WIDTH / 2, 0.5, -135)
+frame.BackgroundColor3 = Color3.fromRGB(22, 24, 34)
+frame.BorderSizePixel = 0
+frame.Active = true
+frame.ClipsDescendants = true
+frame.Parent = screenGui
+Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, -72, 0, FRAME_HEIGHT_CLOSED)
+title.Position = UDim2.fromOffset(12, 0)
+title.BackgroundTransparency = 1
+title.Text = "Night Shader v4 (visual)"
+title.TextColor3 = Color3.fromRGB(235, 235, 245)
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.Font = Enum.Font.GothamBold
+title.TextSize = 15
+title.Parent = frame
+
+local function headerButton(text, xFromRight, color)
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.fromOffset(24, 24)
+    b.Position = UDim2.new(1, xFromRight, 0, 5)
+    b.BackgroundColor3 = color
+    b.BorderSizePixel = 0
+    b.Text = text
+    b.TextColor3 = Color3.new(1, 1, 1)
+    b.Font = Enum.Font.GothamBold
+    b.TextSize = 14
+    b.Parent = frame
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 6)
+    return b
+end
+
+local collapseButton = headerButton("-", -60, Color3.fromRGB(70, 74, 100))
+local closeButton = headerButton("X", -30, Color3.fromRGB(150, 60, 60))
+
+local body = Instance.new("Frame")
+body.Name = "Body"
+body.BackgroundTransparency = 1
+body.Position = UDim2.fromOffset(0, FRAME_HEIGHT_CLOSED)
+body.Size = UDim2.new(1, 0, 1, -FRAME_HEIGHT_CLOSED)
+body.Parent = frame
+
+local COLOR_ON = Color3.fromRGB(70, 90, 150)
+local COLOR_OFF = Color3.fromRGB(140, 70, 70)
+local COLOR_MODE_IDLE = Color3.fromRGB(48, 52, 70)
+local COLOR_MODE_ACTIVE = Color3.fromRGB(80, 120, 95)
+
+local shaderButton = Instance.new("TextButton")
+shaderButton.Size = UDim2.new(1, -24, 0, 38)
+shaderButton.Position = UDim2.fromOffset(12, 4)
+shaderButton.BackgroundColor3 = COLOR_ON
+shaderButton.BorderSizePixel = 0
+shaderButton.Text = "Shader ON"
+shaderButton.TextColor3 = Color3.new(1, 1, 1)
+shaderButton.Font = Enum.Font.GothamBold
+shaderButton.TextSize = 15
+shaderButton.Parent = body
+Instance.new("UICorner", shaderButton).CornerRadius = UDim.new(0, 8)
+
+local modeButtons = {}
+do
+    local columns, gap = 3, 6
+    local width = (FRAME_WIDTH - 24 - gap * (columns - 1)) / columns
+    for i, mode in ipairs(MODES) do
+        local col = (i - 1) % columns
+        local row = math.floor((i - 1) / columns)
+        local b = Instance.new("TextButton")
+        b.Size = UDim2.fromOffset(width, 32)
+        b.Position = UDim2.fromOffset(12 + col * (width + gap), 50 + row * 38)
+        b.BackgroundColor3 = COLOR_MODE_IDLE
+        b.BorderSizePixel = 0
+        b.Text = mode
+        b.TextColor3 = Color3.new(1, 1, 1)
+        b.Font = Enum.Font.GothamBold
+        b.TextSize = 13
+        b.Parent = body
+        Instance.new("UICorner", b).CornerRadius = UDim.new(0, 6)
+        modeButtons[i] = b
+    end
+end
+
+local status = Instance.new("TextLabel")
+status.Size = UDim2.new(1, -24, 1, -134)
+status.Position = UDim2.fromOffset(12, 130)
+status.BackgroundTransparency = 1
+status.Text = "Status: off"
+status.TextColor3 = Color3.fromRGB(180, 182, 195)
+status.TextWrapped = true
+status.TextXAlignment = Enum.TextXAlignment.Left
+status.TextYAlignment = Enum.TextYAlignment.Top
+status.Font = Enum.Font.Gotham
+status.TextSize = 13
+status.Parent = body
+
+local function refreshModeButtons()
+    for i, b in ipairs(modeButtons) do
+        b.BackgroundColor3 = (i == modeIndex) and COLOR_MODE_ACTIVE or COLOR_MODE_IDLE
+    end
+end
+refreshModeButtons()
+
+do -- dragging (title area only)
+    local dragging, dragStart, startPos
+    frame.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            local relativeY = input.Position.Y - frame.AbsolutePosition.Y
+            if relativeY > FRAME_HEIGHT_CLOSED then return end
+            dragging = true
+            dragStart = input.Position
+            startPos = frame.Position
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then dragging = false end
+            end)
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement
+            or input.UserInputType == Enum.UserInputType.Touch) then
+            local delta = input.Position - dragStart
+            frame.Position = UDim2.new(
+                startPos.X.Scale, startPos.X.Offset + delta.X,
+                startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        end
+    end)
+end
+
+-- ===================== Behavior =====================
+local collapsed = false
+collapseButton.MouseButton1Click:Connect(function()
+    collapsed = not collapsed
+    body.Visible = not collapsed
+    collapseButton.Text = collapsed and "+" or "-"
+    frame.Size = UDim2.fromOffset(FRAME_WIDTH, collapsed and FRAME_HEIGHT_CLOSED or FRAME_HEIGHT_OPEN)
+end)
+
+local function fixedClockTime(mode)
+    if mode == "Night" then return CONFIG.NightClockTime end
+    if mode == "Dawn" then return CONFIG.DawnClockTime end
+    if mode == "Day" then return CONFIG.DayClockTime end
+    if mode == "Dusk" then return CONFIG.DuskClockTime end
+    return nil
+end
+
+local function windStatus()
+    if not CONFIG.Wind then return "" end
+    if windWorks == false then
+        return " Wind: GlobalWind could not be set on this executor/game."
+    end
+    return " Wind on (affects terrain grass only)."
+end
+
+local function applyMode()
+    local mode = MODES[modeIndex]
+    local clock = fixedClockTime(mode)
+    if clock then
+        Lighting.ClockTime = clock
+    elseif mode == "Game" and savedLighting and savedLighting.ClockTime then
+        Lighting.ClockTime = savedLighting.ClockTime
+    end
+    applyLightingValues()
+    status.Text = "Status: " .. mode .. " mode. Shadows on for you, held items and objects." .. windStatus()
+end
+
+local function setMode(index)
+    modeIndex = index
+    refreshModeButtons()
+    if enabled then applyMode() end
+end
+
+for i, b in ipairs(modeButtons) do
+    b.MouseButton1Click:Connect(function() setMode(i) end)
+end
+
+local function setShader(value)
+    enabled = value
+    if enabled then
+        saveLighting()
+        pcall(function() sethiddenproperty(Lighting, "Technology", Enum.Technology.Future) end)
+        enableEffects()
+        applyCharacterShadow(localPlayer.Character)
+        watchCharacter(localPlayer.Character)
+        startWorldShadows()
+        startWind()
+        applyMode()
+        shaderButton.Text = "Shader OFF"
+        shaderButton.BackgroundColor3 = COLOR_OFF
+    else
+        disableEffects()
+        restoreLighting()
+        shaderButton.Text = "Shader ON"
+        shaderButton.BackgroundColor3 = COLOR_ON
+        status.Text = "Status: off, original lighting restored"
+    end
+end
+
+shaderButton.MouseButton1Click:Connect(function()
+    setShader(not enabled)
+end)
+
+local characterConnection = localPlayer.CharacterAdded:Connect(function(character)
+    task.wait(0.5)
+    if enabled and character.Parent then
+        applyCharacterShadow(character)
+        watchCharacter(character)
+    end
+end)
+
+local renderConnection = RunService.RenderStepped:Connect(updateContactShadow)
+
+task.spawn(function()
+    local last = os.clock()
+    while alive do
+        task.wait(0.1)
+        local now = os.clock()
+        local dt = now - last
+        last = now
+        if enabled then
+            if MODES[modeIndex] == "Cycle" then
+                Lighting.ClockTime = (Lighting.ClockTime + CONFIG.CycleSpeed * dt) % 24
+            end
+            pcall(applyLightingValues) -- colors follow the clock, so sunrise/sunset glow updates live
+            pcall(updateWind)
+        end
+    end
+end)
+
+task.spawn(function()
+    while alive do
+        task.wait(CONFIG.ReapplyInterval)
+        if enabled then
+            pcall(applyCharacterShadow, localPlayer.Character)
+            local clock = fixedClockTime(MODES[modeIndex])
+            if clock then
+                pcall(function() Lighting.ClockTime = clock end)
+            end
+            if windWorks ~= nil and modeIndex then
+                -- refresh the status once the first wind attempt is known
+                local mode = MODES[modeIndex]
+                status.Text = "Status: " .. mode .. " mode. Shadows on for you, held items and objects."
+                    .. windStatus()
+            end
+        end
+    end
+end)
+
+closeButton.MouseButton1Click:Connect(function()
+    alive = false
+    if enabled then setShader(false) end
+    characterConnection:Disconnect()
+    renderConnection:Disconnect()
+    screenGui:Destroy()
+end)
